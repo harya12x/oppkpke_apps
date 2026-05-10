@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php -l app/Http/Controllers/OppkpkeController.php)",
+      "Bash(php artisan *)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pip install pdfplumber)",
+      "Bash(Find /c/xampp/htdocs/oppkpke_apps/app/Http/Controllers -name \"*Oppkpke*\" -type f)"
+    ]
+  }
+}
