@@ -23,40 +23,31 @@ jobs:
             # Pull latest code
             git pull origin main
 
-            # Stop existing containers
-            docker compose down
+            # Cek apakah dependency berubah
+            COMPOSER_CHANGED=$(git diff HEAD@{1} HEAD -- composer.lock | wc -l)
+            PACKAGE_CHANGED=$(git diff HEAD@{1} HEAD -- package-lock.json | wc -l)
+            DOCKERFILE_CHANGED=$(git diff HEAD@{1} HEAD -- Dockerfile | wc -l)
 
-            # Build fresh image
-            docker compose build --no-cache
-
-            # Start containers
-            docker compose up -d
+            if [ "$COMPOSER_CHANGED" -gt 0 ] || [ "$PACKAGE_CHANGED" -gt 0 ] || [ "$DOCKERFILE_CHANGED" -gt 0 ]; then
+              echo "🔄 Dependency berubah, rebuild image..."
+              docker compose down
+              docker compose build --no-cache
+              docker compose up -d
+            else
+              echo "⚡ Tidak ada perubahan dependency, restart saja..."
+              docker compose down
+              docker compose up -d
+            fi
 
             # Wait for app container to be ready
             sleep 5
 
-            # Generate app key if not exists
-            docker compose exec -T app php artisan key:generate --force
-
-            # Run database migrations
+            # Run artisan commands
             docker compose exec -T app php artisan migrate --force
-
-            # Create storage symlink
             docker compose exec -T app php artisan storage:link
-
-            # Clear and cache config
-            docker compose exec -T app php artisan config:clear
             docker compose exec -T app php artisan config:cache
-
-            # Clear and cache routes
-            docker compose exec -T app php artisan route:clear
             docker compose exec -T app php artisan route:cache
-
-            # Clear and cache views
-            docker compose exec -T app php artisan view:clear
             docker compose exec -T app php artisan view:cache
-
-            # Optimize
             docker compose exec -T app php artisan optimize
 
             echo "✅ Deploy selesai!"
