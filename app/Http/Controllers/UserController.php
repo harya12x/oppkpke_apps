@@ -238,6 +238,167 @@ class UserController extends Controller
     }
 
     // =========================================
+    // GENERATE CREDENTIALS PREVIEW — data PD tanpa operator
+    // =========================================
+
+    public function generateCredentialsPreview()
+    {
+        $perangkatDaerah = PerangkatDaerah::where('is_active', true)->orderBy('nama')->get();
+
+        $existingEmails = User::where('role', 'daerah')
+            ->pluck('email')
+            ->map(fn($e) => strtolower($e))
+            ->toArray();
+
+        $operatorByPd = User::where('role', 'daerah')
+            ->whereNotNull('perangkat_daerah_id')
+            ->pluck('perangkat_daerah_id')
+            ->toArray();
+
+        $usedPrefixes = [];
+
+        $items = $perangkatDaerah
+            ->filter(fn($pd) => !in_array($pd->id, $operatorByPd))
+            ->values()
+            ->map(function ($pd) use ($existingEmails, &$usedPrefixes) {
+                $base    = $this->generateEmailPrefix($pd->nama);
+                $prefix  = $base;
+                $counter = 2;
+                while (
+                    in_array($prefix . '@oppkpke.go.id', $existingEmails) ||
+                    in_array($prefix, $usedPrefixes)
+                ) {
+                    $prefix = $base . $counter++;
+                }
+                $usedPrefixes[] = $prefix;
+
+                return [
+                    'perangkat_daerah_id' => $pd->id,
+                    'nama'                => $pd->nama,
+                    'singkatan'           => $pd->singkatan,
+                    'suggested_prefix'    => $prefix,
+                    'suggested_email'     => $prefix . '@oppkpke.go.id',
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'items'   => $items,
+        ]);
+    }
+
+    // =========================================
+    // GENERATE CREDENTIALS — buat user massal
+    // =========================================
+
+    public function generateCredentials(Request $request)
+    {
+        $request->validate([
+            'items'                       => 'required|array|min:1',
+            'items.*.perangkat_daerah_id' => 'required|exists:perangkat_daerah,id',
+            'items.*.email_prefix'        => 'required|string|max:50|alpha_num',
+        ]);
+
+        $results  = [];
+        $created  = 0;
+        $skipped  = 0;
+
+        foreach ($request->items as $item) {
+            $pdId   = $item['perangkat_daerah_id'];
+            $prefix = strtolower(trim($item['email_prefix']));
+            $email  = $prefix . '@oppkpke.go.id';
+
+            // Skip jika PD sudah punya operator
+            $alreadyHasOp = User::where('role', 'daerah')
+                ->where('perangkat_daerah_id', $pdId)
+                ->exists();
+
+            if ($alreadyHasOp) {
+                $skipped++;
+                $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => 'Sudah ada operator'];
+                continue;
+            }
+
+            // Skip jika email sudah digunakan
+            if (User::where('email', $email)->exists()) {
+                $skipped++;
+                $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => "Email {$email} sudah digunakan"];
+                continue;
+            }
+
+            $pd = PerangkatDaerah::find($pdId);
+
+            User::create([
+                'name'                => $pd->nama,
+                'email'               => $email,
+                'password'            => Hash::make('password123'),
+                'role'                => 'daerah',
+                'perangkat_daerah_id' => $pdId,
+                'is_active'           => true,
+            ]);
+
+            $created++;
+            $results[] = ['pd_id' => $pdId, 'status' => 'created', 'email' => $email];
+        }
+
+        $message = "Berhasil membuat <strong>{$created}</strong> akun baru";
+        if ($skipped > 0) {
+            $message .= ", <strong>{$skipped}</strong> dilewati.";
+        } else {
+            $message .= '.';
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'created' => $created,
+            'skipped' => $skipped,
+            'results' => $results,
+        ]);
+    }
+
+    // =========================================
+    // Helper — generate email prefix dari nama PD
+    // =========================================
+
+    private function generateEmailPrefix(string $nama): string
+    {
+        $clean = strtolower(preg_replace('/[^a-zA-Z\s]/', ' ', $nama));
+        $words = array_values(array_filter(
+            preg_split('/\s+/', trim($clean)),
+            fn($w) => strlen($w) > 0
+        ));
+
+        if (empty($words)) return 'user';
+
+        $stopWords = ['dan', 'atau', 'untuk', 'serta', 'dengan', 'di', 'ke', 'dari'];
+        $first     = $words[0];
+        $rest      = array_values(array_filter(
+            array_slice($words, 1),
+            fn($w) => !in_array($w, $stopWords)
+        ));
+
+        if ($first === 'dinas') {
+            if (empty($rest)) return 'dinas';
+            if (count($rest) === 1) return 'din' . substr($rest[0], 0, 3);
+            return 'din' . implode('', array_map(fn($w) => $w[0], $rest));
+        }
+
+        if ($first === 'badan') {
+            return implode('', array_map(fn($w) => $w[0], $words));
+        }
+
+        if ($first === 'kecamatan') {
+            if (empty($rest)) return 'kec';
+            return 'kec' . implode('', array_map(fn($w) => $w[0], $rest));
+        }
+
+        // Default: initials semua kata
+        return implode('', array_map(fn($w) => $w[0], $words));
+    }
+
+    // =========================================
     // DESTROY — hapus user
     // =========================================
 

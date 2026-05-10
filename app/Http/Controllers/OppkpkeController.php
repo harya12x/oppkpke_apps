@@ -1550,13 +1550,15 @@ class OppkpkeController extends Controller
         $rows = [];
         foreach ($strategi as $sid => $strat) {
             if (!isset($grouped[$sid])) continue;
-            $rows[] = ['_type' => 'strategi_header', 'label' => $strat->nama];
 
+            $groupRows = [];
             foreach ($grouped[$sid] as $sk) {
-                $lap     = $sk->laporan->first();
-                $program = $sk->kegiatan?->program;
-                $rows[]  = [
+                $lap = $sk->laporan->first();
+                if (!$lap) continue;
+                $program     = $sk->kegiatan?->program;
+                $groupRows[] = [
                     '_type'                    => 'data',
+                    'sub_kegiatan_id'          => $sk->id,
                     'strategi'                 => $strat->nama,
                     'perangkat_daerah'         => optional($program?->perangkatDaerah)->nama ?? '',
                     'kode'                     => optional($program)->kode_program ?? '',
@@ -1578,6 +1580,13 @@ class OppkpkeController extends Controller
                     'realisasi_sem2'           => optional($lap)->realisasi_sem2 ?? 0,
                     'realisasi_total'          => optional($lap)->realisasi_total ?? 0,
                 ];
+            }
+
+            if (empty($groupRows)) continue;
+
+            $rows[] = ['_type' => 'strategi_header', 'label' => $strat->nama];
+            foreach ($groupRows as $r) {
+                $rows[] = $r;
             }
         }
 
@@ -1708,37 +1717,54 @@ class OppkpkeController extends Controller
         // Group sub-kegiatan by program for quick access cards
         $perProgram = $subKegiatan->groupBy(fn($sk) => optional($sk->kegiatan?->program)->nama_program ?? 'Program Lainnya');
 
-        // Top 10 ranking all PDs by realisasi % — single aggregated query
-        $rankingRaw = \DB::table('laporan_oppkpke as lo')
+        // Ranking semua PD — satu query agregat dengan nama tabel yang benar (programs)
+        $laporanPerPd = \DB::table('laporan_oppkpke as lo')
             ->join('sub_kegiatan as sk', 'lo.sub_kegiatan_id', '=', 'sk.id')
-            ->join('kegiatan as k', 'sk.kegiatan_id', '=', 'k.id')
-            ->join('program as p', 'k.program_id', '=', 'p.id')
-            ->join('perangkat_daerah as pd2', 'p.perangkat_daerah_id', '=', 'pd2.id')
+            ->join('kegiatan as k',      'sk.kegiatan_id',     '=', 'k.id')
+            ->join('programs as p',      'k.program_id',       '=', 'p.id')
             ->where('lo.tahun', $tahun)
-            ->groupBy('pd2.id', 'pd2.nama', 'pd2.singkatan')
+            ->groupBy('p.perangkat_daerah_id')
             ->select(
-                'pd2.id',
-                'pd2.nama',
-                'pd2.singkatan',
+                'p.perangkat_daerah_id as pd_id',
                 \DB::raw('SUM(lo.alokasi_anggaran) as alokasi'),
-                \DB::raw('SUM(lo.realisasi_total) as realisasi')
+                \DB::raw('SUM(lo.realisasi_total)  as realisasi')
             )
-            ->having('alokasi', '>', 0)
-            ->get();
+            ->get()
+            ->keyBy('pd_id');
 
-        $ranking = $rankingRaw
-            ->map(fn($r) => [
-                'id'        => $r->id,
-                'nama'      => $r->singkatan ?? $r->nama,
-                'nama_full' => $r->nama,
-                'alokasi'   => (float) $r->alokasi,
-                'realisasi' => (float) $r->realisasi,
-                'persen'    => (float) $r->alokasi > 0 ? round(((float) $r->realisasi / (float) $r->alokasi) * 100, 1) : 0,
-                'is_self'   => $r->id === $pdId,
-            ])
-            ->sortByDesc('persen')
-            ->values()
-            ->take(10);
+        $allPds = PerangkatDaerah::where('is_active', true)->orderBy('nama')->get(['id', 'nama', 'singkatan']);
+
+        $ranking = $allPds->map(function ($pd) use ($laporanPerPd, $pdId, $totalAlokasi, $totalRealisasi) {
+            $row     = $laporanPerPd->get($pd->id);
+            $alokasi = (float) ($row->alokasi   ?? 0);
+            $real    = (float) ($row->realisasi  ?? 0);
+            $isSelf  = (int) $pd->id === (int) $pdId;
+
+            // Self PD: use already-computed accurate stats as authoritative fallback
+            if ($isSelf && $totalAlokasi > 0) {
+                $alokasi = $totalAlokasi;
+                $real    = $totalRealisasi;
+            }
+
+            return [
+                'id'        => $pd->id,
+                'nama'      => \Illuminate\Support\Str::limit($pd->singkatan ?? $pd->nama, 28),
+                'nama_full' => $pd->nama,
+                'alokasi'   => $alokasi,
+                'realisasi' => $real,
+                'persen'    => $alokasi > 0 ? round(($real / $alokasi) * 100, 1) : 0,
+                'is_self'   => $isSelf,
+                'has_data'  => $alokasi > 0,
+            ];
+        })
+        ->filter(fn($r) => $r['has_data'] || $r['is_self'])
+        ->sort(function ($a, $b) {
+            // persen desc → alokasi desc → nama asc (deterministic)
+            if ($b['persen'] !== $a['persen']) return $b['persen'] <=> $a['persen'];
+            if ($b['alokasi'] !== $a['alokasi']) return $b['alokasi'] <=> $a['alokasi'];
+            return strcmp($a['nama'], $b['nama']);
+        })
+        ->values();
 
         $stats = [
             'totalAlokasi'   => $totalAlokasi,

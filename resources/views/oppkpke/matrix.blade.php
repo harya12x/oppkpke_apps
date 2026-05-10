@@ -27,19 +27,7 @@
             </button>
         </div>
 
-        {{-- Semester (hanya untuk label export Excel, bukan filter data) --}}
-        <div>
-            <label class="text-xs font-medium text-gray-600 block mb-1">
-                Semester
-                <span class="text-[10px] text-gray-400 font-normal ml-1">(untuk export)</span>
-            </label>
-            <select name="semester" class="border border-gray-300 rounded-lg px-3 py-1.5 bg-white text-sm focus:ring-2 focus:ring-blue-500">
-                <option value="2" {{ request('semester', 2) == 2 ? 'selected' : '' }}>Semester 2</option>
-                <option value="1" {{ request('semester') == 1 ? 'selected' : '' }}>Semester 1</option>
-            </select>
-        </div>
-
-        @if(auth()->user()->isMaster())
+@if(auth()->user()->isMaster())
         {{-- Strategi --}}
         <div>
             <label class="text-xs font-medium text-gray-600 block mb-1">Strategi</label>
@@ -197,7 +185,13 @@
                     $pct     = $alokasi > 0 ? round(($total / $alokasi) * 100, 1) : 0;
                     $rowBg   = $no % 2 === 0 ? '#f5f8fc' : '#ffffff';
                 @endphp
-                <tr style="background:{{ $rowBg }};" class="hover:bg-blue-50 transition-colors">
+                @php
+                    $laporanUrl = route('oppkpke.laporan.index', ['tahun' => $tahun, 'open' => $row['sub_kegiatan_id']]);
+                @endphp
+                <tr style="background:{{ $rowBg }}; cursor:pointer;"
+                    class="hover:bg-blue-50 transition-colors"
+                    onclick="window.location='{{ $laporanUrl }}'"
+                    title="Klik untuk edit data laporan">
                     <td class="border border-gray-200 px-1.5 py-2 text-center text-gray-500 font-medium">{{ $no++ }}</td>
                     <td class="border border-gray-200 px-2 py-2 text-gray-700 leading-snug">{{ $row['strategi'] }}</td>
                     <td class="border border-gray-200 px-2 py-2 text-gray-700 font-medium leading-snug">{{ $row['perangkat_daerah'] }}</td>

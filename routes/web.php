@@ -3,13 +3,19 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\OppkpkeController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserController;
 
 // =====================================================
 // AUTH ROUTES
 // =====================================================
 
-Route::get('/', fn() => redirect()->route('login'));
+Route::get('/', function () {
+    if (auth()->check()) {
+        return redirect()->route('oppkpke.index');
+    }
+    return redirect()->route('login');
+});
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
@@ -95,6 +101,12 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     // PANDUAN PENGGUNA
     // --------------------------------------------------
     Route::get('/panduan', [OppkpkeController::class, 'panduan'])->name('panduan');
+
+    // --------------------------------------------------
+    // PROFIL — ganti password sendiri
+    // --------------------------------------------------
+    Route::get('/ganti-password',  [ProfileController::class, 'changePasswordForm'])->name('profile.change-password');
+    Route::post('/ganti-password', [ProfileController::class, 'changePassword'])->name('profile.change-password.update');
 });
 
 // =====================================================
@@ -102,11 +114,13 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
 // =====================================================
 
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {
-    Route::get('/',                          [UserController::class, 'index'])->name('index');
-    Route::post('/',                         [UserController::class, 'store'])->name('store');
-    Route::get('/{user}',                    [UserController::class, 'show'])->name('show');
-    Route::put('/{user}',                    [UserController::class, 'update'])->name('update');
-    Route::delete('/{user}',                 [UserController::class, 'destroy'])->name('destroy');
-    Route::patch('/{user}/toggle-active',    [UserController::class, 'toggleActive'])->name('toggle-active');
-    Route::patch('/{user}/reset-password',   [UserController::class, 'resetPassword'])->name('reset-password');
+    Route::get('/',                                    [UserController::class, 'index'])->name('index');
+    Route::post('/',                                   [UserController::class, 'store'])->name('store');
+    Route::get('/generate-credentials/preview',        [UserController::class, 'generateCredentialsPreview'])->name('generate-credentials.preview');
+    Route::post('/generate-credentials',               [UserController::class, 'generateCredentials'])->name('generate-credentials');
+    Route::get('/{user}',                              [UserController::class, 'show'])->name('show');
+    Route::put('/{user}',                              [UserController::class, 'update'])->name('update');
+    Route::delete('/{user}',                           [UserController::class, 'destroy'])->name('destroy');
+    Route::patch('/{user}/toggle-active',              [UserController::class, 'toggleActive'])->name('toggle-active');
+    Route::patch('/{user}/reset-password',             [UserController::class, 'resetPassword'])->name('reset-password');
 });

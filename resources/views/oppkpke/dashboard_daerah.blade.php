@@ -121,65 +121,170 @@
         </div>
     </div>
 
-    {{-- ── Top 10 Ranking per Perangkat Daerah ───────────────────────── --}}
-    @if($ranking->isNotEmpty())
+    {{-- ── Ranking per Perangkat Daerah ─────────────────────────────── --}}
+    @php
+        $myRankIdx  = $ranking->search(fn($r) => $r['is_self']);
+        $myRank     = $myRankIdx !== false ? $myRankIdx + 1 : null;
+        $totalRanked = $ranking->count();
+
+        // Show top 10; if self is outside top 10, append separator + self row
+        $showTop   = $ranking->take(10);
+        $selfOutside = $myRank && $myRank > 10;
+        $selfRow   = $selfOutside ? $ranking->firstWhere('is_self', true) : null;
+    @endphp
     <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div class="px-4 md:px-5 py-3 md:py-4 border-b flex items-center justify-between bg-gradient-to-r from-amber-500 to-orange-500">
-            <div>
-                <h3 class="font-semibold text-white text-sm md:text-base flex items-center gap-2">
-                    <i class="fas fa-trophy"></i> Ranking Realisasi Anggaran {{ $tahun }}
-                </h3>
-                <p class="text-amber-100 text-xs mt-0.5">Top {{ $ranking->count() }} Perangkat Daerah berdasarkan % realisasi</p>
+
+        {{-- Header --}}
+        <div class="px-4 md:px-5 py-3 md:py-4 border-b bg-gradient-to-r from-amber-500 to-orange-500">
+            <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                    <h3 class="font-semibold text-white text-sm md:text-base flex items-center gap-2">
+                        <i class="fas fa-trophy"></i> Ranking Realisasi Anggaran {{ $tahun }}
+                    </h3>
+                    <p class="text-amber-100 text-xs mt-0.5">
+                        {{ $totalRanked }} perangkat daerah memiliki data &middot; urut berdasarkan % realisasi
+                    </p>
+                </div>
+                @if($myRank)
+                <div class="flex-shrink-0 text-right bg-white/15 rounded-xl px-3 py-2">
+                    <p class="text-[10px] text-amber-100 leading-none mb-0.5">Posisi Anda</p>
+                    <p class="text-xl font-extrabold text-white leading-none">#{{ $myRank }}</p>
+                    <p class="text-[10px] text-amber-200 leading-none mt-0.5">dari {{ $totalRanked }}</p>
+                </div>
+                @elseif(!$ranking->isEmpty())
+                <div class="flex-shrink-0 text-right bg-white/10 rounded-xl px-3 py-2">
+                    <p class="text-[10px] text-amber-200 leading-none mb-0.5">Posisi Anda</p>
+                    <p class="text-sm font-semibold text-white/60 leading-none">Belum Ada Data</p>
+                </div>
+                @endif
             </div>
-            @php
-                $myRankIdx = $ranking->search(fn($r) => $r['is_self']);
-                $myRank    = $myRankIdx !== false ? $myRankIdx + 1 : null;
-            @endphp
-            @if($myRank)
-            <div class="text-right">
-                <p class="text-xs text-amber-100">Posisi Anda</p>
-                <p class="text-2xl font-bold text-white">#{{ $myRank }}</p>
-            </div>
-            @endif
+        </div>
+
+        @if($ranking->isEmpty())
+        {{-- Empty state --}}
+        <div class="py-12 text-center text-gray-400">
+            <i class="fas fa-chart-bar text-4xl mb-3 block text-gray-200"></i>
+            <p class="font-medium">Belum ada perangkat daerah dengan data anggaran</p>
+            <p class="text-sm mt-1 text-gray-400">Data akan muncul setelah laporan diinput</p>
+        </div>
+        @else
+
+        {{-- Legenda warna --}}
+        <div class="flex items-center gap-4 px-4 md:px-5 py-2 bg-gray-50 border-b text-xs text-gray-500">
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> ≥ 80%</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-yellow-500 inline-block"></span> 50–79%</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span> &lt; 50%</span>
         </div>
 
         <div class="divide-y divide-gray-100">
-            @foreach($ranking as $rank => $r)
+
+            {{-- Top 10 rows --}}
+            @foreach($showTop as $rank => $r)
             @php
                 $isSelf   = $r['is_self'];
                 $persen   = $r['persen'];
                 $barColor = $persen >= 80 ? 'bg-green-500' : ($persen >= 50 ? 'bg-yellow-500' : 'bg-red-400');
-                $txtColor = $persen >= 80 ? 'text-green-600' : ($persen >= 50 ? 'text-yellow-600' : 'text-red-500');
-                $medal    = $rank === 0 ? '🥇' : ($rank === 1 ? '🥈' : ($rank === 2 ? '🥉' : '#' . ($rank + 1)));
+                $txtColor = $persen >= 80 ? 'text-green-600 bg-green-50' : ($persen >= 50 ? 'text-yellow-700 bg-yellow-50' : 'text-red-600 bg-red-50');
+                $pos      = $rank + 1;
             @endphp
-            <div class="flex items-center gap-3 px-4 md:px-5 py-3 {{ $isSelf ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'hover:bg-gray-50' }} transition">
-                <div class="w-8 text-center flex-shrink-0">
-                    <span class="text-sm font-bold {{ $isSelf ? 'text-blue-600' : 'text-gray-400' }}">{{ $medal }}</span>
+            <div class="flex items-center gap-3 px-4 md:px-5 py-2.5
+                        {{ $isSelf ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50' }} transition">
+
+                {{-- Rank --}}
+                <div class="w-7 flex-shrink-0 text-center">
+                    @if($pos === 1)
+                        <span class="text-base">🥇</span>
+                    @elseif($pos === 2)
+                        <span class="text-base">🥈</span>
+                    @elseif($pos === 3)
+                        <span class="text-base">🥉</span>
+                    @else
+                        <span class="text-xs font-bold {{ $isSelf ? 'text-blue-600' : 'text-gray-400' }}">#{{ $pos }}</span>
+                    @endif
                 </div>
+
+                {{-- Name + bar --}}
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-1.5 mb-1">
-                        <p class="text-xs md:text-sm {{ $isSelf ? 'font-bold text-blue-800' : 'font-medium text-gray-700' }} truncate">
+                        <p class="text-xs md:text-sm font-medium truncate {{ $isSelf ? 'text-blue-800 font-bold' : 'text-gray-700' }}"
+                           title="{{ $r['nama_full'] }}">
                             {{ $r['nama'] }}
                         </p>
                         @if($isSelf)
-                        <span class="flex-shrink-0 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded font-semibold">Anda</span>
+                        <span class="flex-shrink-0 text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full font-bold tracking-wide">ANDA</span>
                         @endif
                     </div>
-                    <div class="w-full bg-gray-200 rounded-full h-1.5">
-                        <div class="{{ $barColor }} h-1.5 rounded-full transition-all duration-700" style="width: {{ min($persen, 100) }}%"></div>
-                    </div>
-                    <div class="flex justify-between text-[10px] text-gray-400 mt-0.5">
-                        <span>Rp {{ number_format($r['realisasi'] / 1000000, 1) }} Jt / Rp {{ number_format($r['alokasi'] / 1000000, 1) }} Jt</span>
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 bg-gray-200 rounded-full h-1.5">
+                            <div class="{{ $barColor }} h-1.5 rounded-full transition-all duration-700"
+                                 style="width: {{ min($persen, 100) }}%"></div>
+                        </div>
+                        <span class="text-[10px] text-gray-400 flex-shrink-0 font-mono">
+                            {{ number_format($r['realisasi'] / 1_000_000, 1) }} / {{ number_format($r['alokasi'] / 1_000_000, 1) }} Jt
+                        </span>
                     </div>
                 </div>
-                <div class="flex-shrink-0 text-right">
-                    <span class="text-sm font-bold {{ $txtColor }}">{{ $persen }}%</span>
+
+                {{-- Persen badge --}}
+                <div class="flex-shrink-0">
+                    <span class="inline-block text-xs font-bold px-2 py-0.5 rounded-full {{ $txtColor }}">
+                        {{ $persen }}%
+                    </span>
                 </div>
             </div>
             @endforeach
+
+            {{-- Self outside top 10: show separator + self row --}}
+            @if($selfOutside && $selfRow)
+            @php
+                $persen   = $selfRow['persen'];
+                $barColor = $persen >= 80 ? 'bg-green-500' : ($persen >= 50 ? 'bg-yellow-500' : 'bg-red-400');
+                $txtColor = $persen >= 80 ? 'text-green-600 bg-green-50' : ($persen >= 50 ? 'text-yellow-700 bg-yellow-50' : 'text-red-600 bg-red-50');
+            @endphp
+            <div class="flex items-center gap-2 px-4 md:px-5 py-1.5 bg-gray-50">
+                <div class="flex-1 border-t border-dashed border-gray-300"></div>
+                <span class="text-[10px] text-gray-400 flex-shrink-0">posisi Anda</span>
+                <div class="flex-1 border-t border-dashed border-gray-300"></div>
+            </div>
+            <div class="flex items-center gap-3 px-4 md:px-5 py-2.5 bg-blue-50 border-l-4 border-blue-500">
+                <div class="w-7 flex-shrink-0 text-center">
+                    <span class="text-xs font-bold text-blue-600">#{{ $myRank }}</span>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-1.5 mb-1">
+                        <p class="text-xs md:text-sm font-bold text-blue-800 truncate" title="{{ $selfRow['nama_full'] }}">
+                            {{ $selfRow['nama'] }}
+                        </p>
+                        <span class="flex-shrink-0 text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full font-bold tracking-wide">ANDA</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 bg-gray-200 rounded-full h-1.5">
+                            <div class="{{ $barColor }} h-1.5 rounded-full" style="width: {{ min($persen, 100) }}%"></div>
+                        </div>
+                        <span class="text-[10px] text-gray-400 flex-shrink-0 font-mono">
+                            {{ number_format($selfRow['realisasi'] / 1_000_000, 1) }} / {{ number_format($selfRow['alokasi'] / 1_000_000, 1) }} Jt
+                        </span>
+                    </div>
+                </div>
+                <div class="flex-shrink-0">
+                    <span class="inline-block text-xs font-bold px-2 py-0.5 rounded-full {{ $txtColor }}">{{ $persen }}%</span>
+                </div>
+            </div>
+            @endif
+
+            {{-- Show more indicator if there are more than 10 --}}
+            @if($totalRanked > 10)
+            <div class="px-4 md:px-5 py-2 text-center">
+                <span class="text-xs text-gray-400">
+                    Menampilkan 10 dari {{ $totalRanked }} perangkat daerah
+                    @if($selfOutside) · posisi Anda #{{ $myRank }} @endif
+                </span>
+            </div>
+            @endif
+
         </div>
+        @endif
     </div>
-    @endif
 
     {{-- ── Matriks RAT ─────────────────────────────────────────────── --}}
     <div class="bg-white rounded-xl shadow-sm border overflow-hidden">

@@ -113,6 +113,14 @@
                 <span class="text-sm font-medium">Rekap Laporan</span>
             </a>
 
+            <div class="border-t border-blue-700 my-2 mx-5"></div>
+
+            <a href="{{ route('oppkpke.profile.change-password') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.profile.change-password') ? 'nav-active' : '' }}">
+                <i class="fas fa-key w-5 text-center flex-shrink-0 text-orange-300"></i>
+                <span class="text-sm font-medium">Ganti Password</span>
+            </a>
+
             {{-- ── Menu untuk MASTER (lengkap) ─────────────────── --}}
             @else
 
@@ -120,12 +128,6 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.dashboard') ? 'nav-active' : '' }}">
                 <i class="fas fa-chart-pie w-5 text-center flex-shrink-0"></i>
                 <span class="text-sm">Dashboard</span>
-            </a>
-
-            <a href="{{ route('oppkpke.explorer') }}"
-               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.explorer*') ? 'nav-active' : '' }}">
-                <i class="fas fa-folder-tree w-5 text-center flex-shrink-0"></i>
-                <span class="text-sm">Explorer Data</span>
             </a>
 
             <a href="{{ route('oppkpke.laporan.index') }}"
@@ -140,16 +142,10 @@
                 <span class="text-sm">Statistik</span>
             </a>
 
-            <a href="{{ route('oppkpke.report') }}"
-               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.report') ? 'nav-active' : '' }}">
-                <i class="fas fa-table-list w-5 text-center flex-shrink-0"></i>
-                <span class="text-sm">Rekap Laporan</span>
-            </a>
-
             <a href="{{ route('oppkpke.matrix', ['tahun' => request('tahun', date('Y'))]) }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.matrix') ? 'nav-active' : '' }}">
                 <i class="fas fa-table w-5 text-center flex-shrink-0 text-green-300"></i>
-                <span class="text-sm">Matriks RAT</span>
+                <span class="text-sm">Matriks</span>
                 <span class="ml-auto text-[10px] bg-green-500 text-white rounded px-1.5 py-0.5 font-semibold">21 Kol</span>
             </a>
 
@@ -390,8 +386,37 @@
             }
         }
 
-        // ── Global year selector ──────────────────────────────────────
+        // ── Global year selector — persists via localStorage ─────────
+        (function () {
+            var urlYear  = new URLSearchParams(window.location.search).get('tahun');
+            var lsYear   = localStorage.getItem('oppkpke_tahun');
+            var selEl    = document.getElementById('global-tahun');
+
+            if (urlYear) {
+                // URL has explicit year → save it
+                localStorage.setItem('oppkpke_tahun', urlYear);
+                selEl.value = urlYear;
+            } else if (lsYear) {
+                // No year in URL → redirect once with saved year
+                var u = new URL(window.location.href);
+                u.searchParams.set('tahun', lsYear);
+                window.location.replace(u.toString());
+                return;
+            }
+
+            // Patch all sidebar nav links to carry the active year
+            var activeYear = selEl.value;
+            document.querySelectorAll('#main-sidebar a[href]').forEach(function (a) {
+                try {
+                    var u = new URL(a.href, window.location.origin);
+                    u.searchParams.set('tahun', activeYear);
+                    a.href = u.toString();
+                } catch (e) {}
+            });
+        }());
+
         $('#global-tahun').on('change', function () {
+            localStorage.setItem('oppkpke_tahun', this.value);
             var url = new URL(window.location.href);
             url.searchParams.set('tahun', this.value);
             window.location.href = url.toString();

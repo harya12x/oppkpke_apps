@@ -109,7 +109,13 @@
             Reset
         </a>
 
-        <div class="ml-auto">
+        <div class="ml-auto flex items-center gap-2">
+            <button type="button" onclick="openGenerateModal()"
+                    class="bg-purple-600 hover:bg-purple-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+                <i class="fas fa-wand-magic-sparkles"></i>
+                <span class="hidden sm:inline">Generate Credential</span>
+                <span class="sm:hidden">Generate</span>
+            </button>
             <button type="button" onclick="openCreateModal()"
                     class="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
                 <i class="fas fa-user-plus"></i>
@@ -465,6 +471,107 @@
     </div>
 </div>
 
+
+{{-- ════════════════════════════════════════════════════════════
+     MODAL: GENERATE SEMUA CREDENTIAL
+════════════════════════════════════════════════════════════ --}}
+<div id="modalGenerate" class="fixed inset-0 z-[150] hidden items-center justify-center p-3 md:p-4">
+    <div class="absolute inset-0 bg-black/50" onclick="closeModal('modalGenerate')"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 flex flex-col max-h-[90vh] overflow-hidden">
+
+        {{-- Header --}}
+        <div class="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4 flex items-center justify-between flex-shrink-0">
+            <h3 class="text-white font-semibold flex items-center gap-2 text-sm md:text-base">
+                <i class="fas fa-wand-magic-sparkles"></i>
+                Generate Semua Credential Operator Daerah
+            </h3>
+            <button onclick="closeModal('modalGenerate')" class="text-white/70 hover:text-white transition">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        {{-- Loading state --}}
+        <div id="genLoading" class="flex-1 flex items-center justify-center py-16">
+            <div class="text-center text-gray-500">
+                <div class="w-10 h-10 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mx-auto mb-3"></div>
+                <p class="text-sm">Memuat data perangkat daerah...</p>
+            </div>
+        </div>
+
+        {{-- Content --}}
+        <div id="genContent" class="hidden flex-1 flex flex-col min-h-0">
+
+            {{-- Info banner --}}
+            <div class="px-5 pt-4 pb-2 flex-shrink-0">
+                <div class="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex items-start gap-3">
+                    <i class="fas fa-circle-info text-purple-500 flex-shrink-0 mt-0.5"></i>
+                    <div class="text-xs text-purple-800 space-y-1">
+                        <p>Daftar perangkat daerah yang <strong>belum memiliki akun operator</strong>. Email dibuat otomatis — Anda dapat mengubah prefix sebelum generate.</p>
+                        <p>Password default semua akun baru: <code class="bg-purple-100 px-1.5 py-0.5 rounded font-mono">password123</code></p>
+                    </div>
+                </div>
+            </div>
+
+            {{-- Empty state --}}
+            <div id="genEmpty" class="hidden flex-1 flex items-center justify-center py-10">
+                <div class="text-center text-gray-400">
+                    <i class="fas fa-check-circle text-green-400 text-4xl mb-3 block"></i>
+                    <p class="font-medium text-gray-600">Semua perangkat daerah sudah memiliki operator!</p>
+                    <p class="text-sm mt-1">Tidak ada akun baru yang perlu dibuat.</p>
+                </div>
+            </div>
+
+            {{-- Table --}}
+            <div id="genTableWrap" class="flex-1 overflow-y-auto px-5 py-3 min-h-0">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-50">
+                        <tr class="text-xs text-gray-500 uppercase tracking-wide border-b">
+                            <th class="text-left pb-2 pr-3 font-semibold w-6">
+                                <input type="checkbox" id="genSelectAll" checked
+                                       class="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                       onchange="toggleSelectAll(this.checked)">
+                            </th>
+                            <th class="text-left pb-2 pr-3 font-semibold">Perangkat Daerah</th>
+                            <th class="text-left pb-2 font-semibold">Email yang Akan Dibuat</th>
+                        </tr>
+                    </thead>
+                    <tbody id="genTableBody" class="divide-y divide-gray-100">
+                        {{-- Populated by JS --}}
+                    </tbody>
+                </table>
+            </div>
+
+            {{-- Footer --}}
+            <div id="genError" class="hidden mx-5 mb-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex-shrink-0"></div>
+
+            <div class="px-5 py-4 border-t bg-gray-50 flex items-center gap-3 flex-shrink-0">
+                <p class="text-xs text-gray-500 flex-1" id="genSummary"></p>
+                <button onclick="closeModal('modalGenerate')"
+                        class="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-100 transition">
+                    Batal
+                </button>
+                <button id="btnGenerate" onclick="submitGenerate()"
+                        class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                    Generate Akun
+                </button>
+            </div>
+        </div>
+
+        {{-- Result state --}}
+        <div id="genResult" class="hidden flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-check text-green-500 text-2xl"></i>
+            </div>
+            <h4 class="font-bold text-gray-800 text-lg mb-1" id="genResultTitle"></h4>
+            <p class="text-sm text-gray-500 mb-6" id="genResultSub"></p>
+            <button onclick="closeModal('modalGenerate'); setTimeout(()=>location.reload(), 100)"
+                    class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition">
+                <i class="fas fa-rotate-right mr-1"></i> Refresh Halaman
+            </button>
+        </div>
+    </div>
+</div>
 
 {{-- ════════════════════════════════════════════════════════════
      PICKER MODAL: ROLE
@@ -1124,6 +1231,153 @@ function submitReset() {
             document.getElementById('resetError').innerHTML = err;
             document.getElementById('resetError').classList.remove('hidden');
         });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// GENERATE CREDENTIALS
+// ═══════════════════════════════════════════════════════════════════════
+
+var genItems = [];
+
+function openGenerateModal() {
+    // Reset state
+    genItems = [];
+    document.getElementById('genLoading').style.display  = 'flex';
+    document.getElementById('genContent').style.display  = 'none';
+    document.getElementById('genResult').style.display   = 'none';
+    document.getElementById('genError').classList.add('hidden');
+    openModal('modalGenerate');
+
+    $.get('/admin/users/generate-credentials/preview')
+        .done(function(res) {
+            genItems = res.items || [];
+            document.getElementById('genLoading').style.display = 'none';
+            document.getElementById('genContent').style.display = 'flex';
+            document.getElementById('genContent').style.flexDirection = 'column';
+
+            if (genItems.length === 0) {
+                document.getElementById('genEmpty').style.display     = 'flex';
+                document.getElementById('genTableWrap').style.display = 'none';
+                document.getElementById('btnGenerate').disabled       = true;
+                document.getElementById('genSummary').textContent     = 'Tidak ada akun baru yang perlu dibuat.';
+            } else {
+                document.getElementById('genEmpty').style.display     = 'none';
+                document.getElementById('genTableWrap').style.display = 'block';
+                document.getElementById('btnGenerate').disabled       = false;
+                renderGenTable();
+            }
+        })
+        .fail(function() {
+            document.getElementById('genLoading').style.display = 'none';
+            document.getElementById('genContent').style.display = 'flex';
+            document.getElementById('genContent').style.flexDirection = 'column';
+            document.getElementById('genEmpty').style.display   = 'none';
+            document.getElementById('genTableWrap').style.display = 'none';
+            document.getElementById('genError').innerHTML = '<i class="fas fa-exclamation-circle mr-1"></i>Gagal memuat data. Coba lagi.';
+            document.getElementById('genError').classList.remove('hidden');
+            document.getElementById('genSummary').textContent = '';
+        });
+}
+
+function renderGenTable() {
+    var tbody = document.getElementById('genTableBody');
+    var html  = '';
+    genItems.forEach(function(item, idx) {
+        html += '<tr class="hover:bg-gray-50 transition">' +
+            '<td class="py-2.5 pr-3">' +
+                '<input type="checkbox" class="gen-check rounded border-gray-300 text-purple-600 focus:ring-purple-500" checked data-idx="' + idx + '" onchange="updateGenSummary()">' +
+            '</td>' +
+            '<td class="py-2.5 pr-3">' +
+                '<p class="font-medium text-gray-800 text-xs leading-snug">' + escHtml(item.nama) + '</p>' +
+                (item.singkatan ? '<p class="text-xs text-gray-400">' + escHtml(item.singkatan) + '</p>' : '') +
+            '</td>' +
+            '<td class="py-2.5">' +
+                '<div class="flex items-center gap-1">' +
+                    '<input type="text" id="prefix-' + idx + '" value="' + escHtml(item.suggested_prefix) + '"' +
+                           ' class="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:ring-2 focus:ring-purple-500 focus:border-purple-500 w-28" ' +
+                           ' oninput="updateGenSummary()">' +
+                    '<span class="text-xs text-gray-500 font-mono">@oppkpke.go.id</span>' +
+                '</div>' +
+            '</td>' +
+        '</tr>';
+    });
+    tbody.innerHTML = html;
+    updateGenSummary();
+}
+
+function toggleSelectAll(checked) {
+    document.querySelectorAll('.gen-check').forEach(function(cb) { cb.checked = checked; });
+    updateGenSummary();
+}
+
+function updateGenSummary() {
+    var total   = document.querySelectorAll('.gen-check').length;
+    var selected = document.querySelectorAll('.gen-check:checked').length;
+    var summary  = document.getElementById('genSummary');
+    var btn      = document.getElementById('btnGenerate');
+    var allChk   = document.getElementById('genSelectAll');
+
+    summary.textContent = selected + ' dari ' + total + ' akun akan dibuat dengan password default: password123';
+    btn.disabled = selected === 0;
+    if (allChk) allChk.checked = selected === total;
+}
+
+function submitGenerate() {
+    var payload = [];
+    var hasDuplicate = false;
+    var seenPrefixes = {};
+
+    document.querySelectorAll('.gen-check:checked').forEach(function(cb) {
+        var idx    = parseInt(cb.dataset.idx);
+        var prefix = document.getElementById('prefix-' + idx).value.trim().toLowerCase();
+
+        if (!prefix) { hasDuplicate = true; return; }
+        if (seenPrefixes[prefix]) { hasDuplicate = true; return; }
+        seenPrefixes[prefix] = true;
+
+        payload.push({
+            perangkat_daerah_id: genItems[idx].perangkat_daerah_id,
+            email_prefix:        prefix,
+        });
+    });
+
+    if (payload.length === 0) {
+        document.getElementById('genError').innerHTML = 'Pilih minimal satu perangkat daerah.';
+        document.getElementById('genError').classList.remove('hidden');
+        return;
+    }
+
+    if (hasDuplicate) {
+        document.getElementById('genError').innerHTML = 'Terdapat prefix email duplikat atau kosong. Periksa kembali.';
+        document.getElementById('genError').classList.remove('hidden');
+        return;
+    }
+
+    document.getElementById('genError').classList.add('hidden');
+    document.getElementById('btnGenerate').disabled = true;
+    document.getElementById('btnGenerate').innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Memproses...';
+
+    $.ajax({
+        url:    '/admin/users/generate-credentials',
+        method: 'POST',
+        data:   { _token: '{{ csrf_token() }}', items: payload },
+    })
+    .done(function(res) {
+        document.getElementById('genContent').style.display = 'none';
+        document.getElementById('genResult').style.display  = 'flex';
+        document.getElementById('genResultTitle').innerHTML  = res.message;
+        document.getElementById('genResultSub').textContent =
+            res.skipped > 0
+                ? res.skipped + ' akun dilewati karena sudah memiliki operator atau email duplikat.'
+                : 'Semua akun berhasil dibuat.';
+    })
+    .fail(function(xhr) {
+        document.getElementById('btnGenerate').disabled = false;
+        document.getElementById('btnGenerate').innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Generate Akun';
+        var msg = (xhr.responseJSON && xhr.responseJSON.message) || 'Terjadi kesalahan. Coba lagi.';
+        document.getElementById('genError').innerHTML = '<i class="fas fa-exclamation-circle mr-1"></i>' + msg;
+        document.getElementById('genError').classList.remove('hidden');
+    });
 }
 
 // ── Delete ──────────────────────────────────────────────────────────────
