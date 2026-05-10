@@ -24,10 +24,10 @@ class OppkpkeController extends Controller
 
     public function index()
     {
-        if (auth()->user()->isDaerah()) {
-            return redirect()->route('oppkpke.dashboard');
+        if (auth()->user()->isMaster()) {
+            return redirect()->route('oppkpke.matrix');
         }
-        return redirect()->route('oppkpke.laporan.index');
+        return redirect()->route('oppkpke.dashboard');
     }
 
     // =========================================

@@ -61,8 +61,8 @@ class AuthController extends Controller
             $request->session()->regenerate();   // OWASP A07: session fixation prevention
 
             $redirect = $user->isMaster()
-                ? route('oppkpke.dashboard')
-                : route('oppkpke.laporan.index');
+                ? route('oppkpke.matrix')
+                : route('oppkpke.dashboard');
 
             return redirect()->intended($redirect);
         }

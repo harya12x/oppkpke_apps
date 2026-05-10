@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+.github
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies (akan di-install ulang di dalam container)
+node_modules
+vendor
+
+# Laravel generated
+/public/hot
+/public/storage
+/storage/*.key
+*.log
+
+# Docker files (tidak perlu di dalam image)
+docker
+docker-compose.yml
+docker-compose.*.yml
+
+# Docs
+README.md
+CHANGELOG.md
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

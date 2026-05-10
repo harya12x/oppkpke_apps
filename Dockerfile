@@ -1,5 +1,6 @@
 FROM php:8.3-fpm
 
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -28,18 +29,30 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
+# Set working directory
 WORKDIR /var/www
 
-COPY . .
-
+# Copy composer files first (layer caching - hanya rebuild kalau composer berubah)
+COPY composer.json composer.lock ./
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-RUN npm install && npm run build
+# Copy package files (layer caching - hanya rebuild kalau package berubah)
+COPY package*.json ./
+RUN npm ci
 
+# Copy semua project files
+COPY . .
+
+# Build frontend assets
+RUN npm run build
+
+# Set permissions
 RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache \
     && chmod -R 775 /var/www/storage /var/www/bootstrap/cache
 
 EXPOSE 9000
+
 CMD ["php-fpm"]

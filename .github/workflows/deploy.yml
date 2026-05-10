@@ -20,34 +20,79 @@ jobs:
           script: |
             cd /var/www/oppkpke_apps
 
-            # Pull latest code
+            echo "========================================"
+            echo "🚀 Memulai proses deploy..."
+            echo "========================================"
+
+            # ----------------------------------------
+            # STEP 1: Pull latest code
+            # ----------------------------------------
+            echo "📥 Pull latest code dari GitHub..."
             git pull origin main
 
-            # Cek apakah dependency berubah
+            # ----------------------------------------
+            # STEP 2: Cek perubahan dependency
+            # ----------------------------------------
             COMPOSER_CHANGED=$(git diff HEAD@{1} HEAD -- composer.lock | wc -l)
             PACKAGE_CHANGED=$(git diff HEAD@{1} HEAD -- package-lock.json | wc -l)
             DOCKERFILE_CHANGED=$(git diff HEAD@{1} HEAD -- Dockerfile | wc -l)
 
             if [ "$COMPOSER_CHANGED" -gt 0 ] || [ "$PACKAGE_CHANGED" -gt 0 ] || [ "$DOCKERFILE_CHANGED" -gt 0 ]; then
-              echo "🔄 Dependency berubah, rebuild image..."
-              docker compose down
-              docker compose build --no-cache
-              docker compose up -d
+
+              # ----------------------------------------
+              # Kondisi A: Ada perubahan dependency
+              # Build image baru, server tetap jalan
+              # ----------------------------------------
+              echo "🔨 Dependency berubah, build image baru..."
+              echo "   (Server tetap jalan selama proses build)"
+              docker compose build app
+
+              echo "🗄️  Jalankan migrasi di container lama..."
+              docker compose exec -T app php artisan migrate --force
+
+              echo "⚡ Swap ke container baru (downtime < 1 detik)..."
+              docker compose up -d --no-deps app
+
             else
-              echo "⚡ Tidak ada perubahan dependency, restart saja..."
-              docker compose down
-              docker compose up -d
+
+              # ----------------------------------------
+              # Kondisi B: Hanya update code biasa
+              # Graceful reload, tanpa restart container
+              # ----------------------------------------
+              echo "⚡ Hanya update code, graceful reload..."
+
+              echo "🗄️  Jalankan migrasi..."
+              docker compose exec -T app php artisan migrate --force
+
+              echo "♻️  Reload PHP-FPM (tanpa restart container)..."
+              docker compose exec -T app kill -USR2 1
+
             fi
 
-            # Wait for app container to be ready
-            sleep 5
+            # ----------------------------------------
+            # STEP 3: Post-deploy artisan commands
+            # ----------------------------------------
+            echo "⏳ Tunggu container siap..."
+            sleep 3
 
-            # Run artisan commands
-            docker compose exec -T app php artisan migrate --force
+            echo "🔗 Buat storage symlink..."
             docker compose exec -T app php artisan storage:link
+
+            echo "🧹 Clear & rebuild cache..."
+            docker compose exec -T app php artisan config:clear
             docker compose exec -T app php artisan config:cache
+            docker compose exec -T app php artisan route:clear
             docker compose exec -T app php artisan route:cache
+            docker compose exec -T app php artisan view:clear
             docker compose exec -T app php artisan view:cache
             docker compose exec -T app php artisan optimize
 
-            echo "✅ Deploy selesai!"
+            # ----------------------------------------
+            # STEP 4: Verifikasi deploy berhasil
+            # ----------------------------------------
+            echo "🔍 Verifikasi container berjalan..."
+            docker compose ps
+
+            echo "========================================"
+            echo "✅ Deploy selesai tanpa downtime!"
+            echo "========================================"
