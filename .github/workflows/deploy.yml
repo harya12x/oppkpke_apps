@@ -1,0 +1,62 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          script: |
+            cd /var/www/oppkpke_apps
+
+            # Pull latest code
+            git pull origin main
+
+            # Stop existing containers
+            docker compose down
+
+            # Build fresh image
+            docker compose build --no-cache
+
+            # Start containers
+            docker compose up -d
+
+            # Wait for app container to be ready
+            sleep 5
+
+            # Generate app key if not exists
+            docker compose exec -T app php artisan key:generate --force
+
+            # Run database migrations
+            docker compose exec -T app php artisan migrate --force
+
+            # Create storage symlink
+            docker compose exec -T app php artisan storage:link
+
+            # Clear and cache config
+            docker compose exec -T app php artisan config:clear
+            docker compose exec -T app php artisan config:cache
+
+            # Clear and cache routes
+            docker compose exec -T app php artisan route:clear
+            docker compose exec -T app php artisan route:cache
+
+            # Clear and cache views
+            docker compose exec -T app php artisan view:clear
+            docker compose exec -T app php artisan view:cache
+
+            # Optimize
+            docker compose exec -T app php artisan optimize
+
+            echo "✅ Deploy selesai!"

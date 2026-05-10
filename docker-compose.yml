@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oppkpke_app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+      - ./storage:/var/www/storage
+      - ./bootstrap/cache:/var/www/bootstrap/cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - oppkpke_network
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+
+  nginx:
+    image: nginx:alpine
+    container_name: oppkpke_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - .:/var/www
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - oppkpke_network
+    depends_on:
+      - app
+
+networks:
+  oppkpke_network:
+    driver: bridge
