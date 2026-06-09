@@ -759,7 +759,8 @@ function exportPdf() {
     if (status) params.set('status', status);
     var qs  = params.toString();
     var url = "{{ route('admin.users.export-pdf') }}" + (qs ? ('?' + qs) : '');
-    window.open(url, '_blank');
+    // Respons attachment → browser langsung men-download file PDF tanpa pindah halaman.
+    window.location.href = url;
 }
 
 // ── State ──────────────────────────────────────────────────────────────

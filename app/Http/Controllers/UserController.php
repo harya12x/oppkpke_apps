@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\PerangkatDaerah;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
@@ -117,13 +118,17 @@ class UserController extends Controller
             'inactive' => $users->where('is_active', false)->count(),
         ];
 
-        return view('admin.users.pdf', [
+        $pdf = Pdf::loadView('admin.users.pdf-download', [
             'users'      => $users,
             'summary'    => $summary,
             'filters'    => $filters,
             'generatedAt'=> now(),
             'generatedBy'=> auth()->user(),
-        ]);
+        ])->setPaper('a4', 'landscape');
+
+        $filename = 'rekap-operator-daerah-' . now()->format('Y-m-d') . '.pdf';
+
+        return $pdf->download($filename);
     }
 
     // =========================================
