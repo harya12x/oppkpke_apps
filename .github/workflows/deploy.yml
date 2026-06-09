@@ -66,13 +66,12 @@ jobs:
             echo "🔗 Buat storage symlink..."
             docker compose exec -T app php artisan storage:link || true
 
-            echo "🧹 Clear & rebuild cache..."
-            docker compose exec -T app php artisan config:clear
-            docker compose exec -T app php artisan config:cache
-            docker compose exec -T app php artisan route:clear
-            docker compose exec -T app php artisan route:cache
-            docker compose exec -T app php artisan view:clear
-            docker compose exec -T app php artisan view:cache
+            echo "🧹 Refresh package manifest & rebuild cache..."
+            # optimize:clear membersihkan cache basi di named volume (config/route/view/compiled).
+            docker compose exec -T app php artisan optimize:clear
+            # package:discover WAJIB: named volume bootstrap/cache menutupi manifest dari image,
+            # tanpa ini package baru (mis. dompdf) tidak terdaftar → "Target class does not exist".
+            docker compose exec -T app php artisan package:discover --ansi
             docker compose exec -T app php artisan optimize
 
             # ----------------------------------------
