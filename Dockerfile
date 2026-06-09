@@ -36,8 +36,10 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www
 
 # Copy composer files first (layer caching - hanya rebuild kalau composer berubah)
+# --no-scripts WAJIB: artisan belum ada di tahap ini, jadi package:discover
+# (post-autoload-dump) akan gagal kalau scripts dijalankan sekarang.
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts
 
 # Copy package files (layer caching - hanya rebuild kalau package berubah)
 COPY package*.json ./
@@ -45,6 +47,9 @@ RUN npm ci
 
 # Copy semua project files
 COPY . .
+
+# Sekarang artisan sudah ada — dump autoload + jalankan package:discover
+RUN composer dump-autoload --optimize --no-dev
 
 # Build frontend assets
 RUN npm run build

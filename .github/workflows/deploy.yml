@@ -44,43 +44,19 @@ jobs:
             fi
 
             # ----------------------------------------
-            # STEP 2: Cek perubahan dependency
+            # STEP 2: Build image baru & swap container
+            # Kode di-bake ke dalam image (app TIDAK mount kode host),
+            # jadi perubahan kode HANYA muncul setelah rebuild + swap.
+            # Layer caching bikin rebuild cepat kalau dependency tak berubah.
             # ----------------------------------------
-            CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
-            echo "$CHANGED_FILES" | grep -qE '^(composer\.lock|package-lock\.json|Dockerfile)$' && DEP_CHANGED=1 || DEP_CHANGED=0
+            echo "🔨 Build image baru... (server lama tetap jalan selama build)"
+            docker compose build app
 
-            if [ "$DEP_CHANGED" -eq 1 ]; then
+            echo "🗄️  Jalankan migrasi (di container yang sedang jalan)..."
+            docker compose exec -T app php artisan migrate --force
 
-              # ----------------------------------------
-              # Kondisi A: Ada perubahan dependency
-              # Build image baru, server tetap jalan
-              # ----------------------------------------
-              echo "🔨 Dependency berubah, build image baru..."
-              echo "   (Server tetap jalan selama proses build)"
-              docker compose build app
-
-              echo "🗄️  Jalankan migrasi di container lama..."
-              docker compose exec -T app php artisan migrate --force
-
-              echo "⚡ Swap ke container baru (downtime < 1 detik)..."
-              docker compose up -d --no-deps app
-
-            else
-
-              # ----------------------------------------
-              # Kondisi B: Hanya update code biasa
-              # Graceful reload, tanpa restart container
-              # ----------------------------------------
-              echo "⚡ Hanya update code, graceful reload..."
-
-              echo "🗄️  Jalankan migrasi..."
-              docker compose exec -T app php artisan migrate --force
-
-              echo "♻️  Reload PHP-FPM (tanpa restart container)..."
-              # 'kill' adalah builtin shell, bukan binary — jalankan lewat sh.
-              docker compose exec -T app sh -c 'kill -USR2 1'
-
-            fi
+            echo "⚡ Swap ke container baru (downtime < 1 detik)..."
+            docker compose up -d --no-deps app
 
             # ----------------------------------------
             # STEP 3: Post-deploy artisan commands
