@@ -80,7 +80,10 @@ class UserController extends Controller
 
     public function exportPdf(Request $request)
     {
-        $query = User::with('perangkatDaerah')->orderByRaw("FIELD(role,'master','daerah')")->orderBy('name');
+        // PDF khusus Operator Daerah — Admin Master tidak ditampilkan.
+        $query = User::with('perangkatDaerah')
+            ->where('role', 'daerah')
+            ->orderBy('name');
 
         // Terapkan filter yang sama dengan halaman index agar PDF konsisten
         $filters = [];
@@ -92,11 +95,6 @@ class UserController extends Controller
                   ->orWhere('email', 'like', "%{$search}%");
             });
             $filters['Pencarian'] = $search;
-        }
-
-        if ($request->filled('role')) {
-            $query->where('role', $request->role);
-            $filters['Role'] = $request->role === 'master' ? 'Admin Master' : 'Operator Daerah';
         }
 
         if ($request->filled('perangkat_daerah_id')) {
@@ -115,8 +113,6 @@ class UserController extends Controller
         // Ringkasan dihitung dari hasil terfilter agar selaras dengan isi tabel
         $summary = [
             'total'    => $users->count(),
-            'master'   => $users->where('role', 'master')->count(),
-            'daerah'   => $users->where('role', 'daerah')->count(),
             'active'   => $users->where('is_active', true)->count(),
             'inactive' => $users->where('is_active', false)->count(),
         ];

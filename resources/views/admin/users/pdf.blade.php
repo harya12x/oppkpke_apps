@@ -245,7 +245,7 @@
 
         {{-- ── JUDUL DOKUMEN ── --}}
         <div class="doc-title">
-            <h1>Rekapitulasi Data Pengguna Sistem</h1>
+            <h1>Rekapitulasi Data Operator Daerah</h1>
             <div class="line"></div>
         </div>
 
@@ -261,16 +261,14 @@
                         <span class="chip">{{ $key }}: <b>{{ $val }}</b></span>
                     @endforeach
                 @else
-                    <span class="chip">Menampilkan <b>seluruh pengguna</b></span>
+                    <span class="chip">Menampilkan <b>seluruh operator daerah</b></span>
                 @endif
             </div>
         </div>
 
         {{-- ── RINGKASAN ── --}}
-        <div class="stats">
-            <div class="stat total">    <div class="num">{{ $summary['total'] }}</div>    <div class="lbl">Total Akun</div></div>
-            <div class="stat master">   <div class="num">{{ $summary['master'] }}</div>   <div class="lbl">Admin Master</div></div>
-            <div class="stat daerah">   <div class="num">{{ $summary['daerah'] }}</div>   <div class="lbl">Operator Daerah</div></div>
+        <div class="stats" style="grid-template-columns: repeat(3, 1fr);">
+            <div class="stat total">    <div class="num">{{ $summary['total'] }}</div>    <div class="lbl">Total Operator</div></div>
             <div class="stat active">   <div class="num">{{ $summary['active'] }}</div>   <div class="lbl">Aktif</div></div>
             <div class="stat inactive"> <div class="num">{{ $summary['inactive'] }}</div> <div class="lbl">Nonaktif</div></div>
         </div>
@@ -280,26 +278,16 @@
             <thead>
                 <tr>
                     <th class="center" style="width:36px;">No</th>
-                    <th>Nama Pengguna</th>
+                    <th>Nama Operator</th>
                     <th>Email</th>
-                    <th>Role</th>
                     <th>Perangkat Daerah</th>
                     <th class="center" style="width:90px;">Status</th>
                     <th class="center" style="width:120px;">Login Terakhir</th>
                 </tr>
             </thead>
             <tbody>
-                @php $no = 0; $lastRole = null; @endphp
+                @php $no = 0; @endphp
                 @forelse($users as $user)
-                    @if($user->role !== $lastRole)
-                        @php $lastRole = $user->role; @endphp
-                        <tr class="group-row">
-                            <td colspan="7">
-                                {{ $user->role === 'master' ? 'Admin Master' : 'Operator Daerah' }}
-                                ({{ $users->where('role', $user->role)->count() }} akun)
-                            </td>
-                        </tr>
-                    @endif
                     <tr>
                         <td class="num">{{ ++$no }}</td>
                         <td>
@@ -307,14 +295,11 @@
                         </td>
                         <td class="uemail">{{ $user->email }}</td>
                         <td>
-                            <span class="badge {{ $user->role }}">{{ $user->role_label }}</span>
-                        </td>
-                        <td>
                             @if($user->perangkatDaerah)
                                 <span class="pd-name">{{ $user->perangkatDaerah->nama }}</span>
                                 <div class="pd-jenis">{{ $user->perangkatDaerah->jenis }}</div>
                             @else
-                                <span class="dash">— Seluruh Daerah —</span>
+                                <span class="dash">—</span>
                             @endif
                         </td>
                         <td class="center">
@@ -333,7 +318,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="7" class="empty">Tidak ada data pengguna untuk ditampilkan.</td>
+                        <td colspan="6" class="empty">Tidak ada data operator untuk ditampilkan.</td>
                     </tr>
                 @endforelse
             </tbody>
@@ -351,7 +336,7 @@
         {{-- ── CATATAN KAKI ── --}}
         <div class="foot">
             <span>Dokumen ini dibuat secara otomatis oleh Sistem OPPKPKE Kabupaten Kotabaru.</span>
-            <span>Total {{ $summary['total'] }} pengguna · Dicetak {{ $fmtTanggalJam($generatedAt) }}</span>
+            <span>Total {{ $summary['total'] }} operator · Dicetak {{ $fmtTanggalJam($generatedAt) }}</span>
         </div>
 
     </div>
