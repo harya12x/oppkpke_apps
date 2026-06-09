@@ -115,6 +115,7 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
 
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {
     Route::get('/',                                    [UserController::class, 'index'])->name('index');
+    Route::get('/export/pdf',                          [UserController::class, 'exportPdf'])->name('export-pdf');
     Route::post('/',                                   [UserController::class, 'store'])->name('store');
     Route::get('/generate-credentials/preview',        [UserController::class, 'generateCredentialsPreview'])->name('generate-credentials.preview');
     Route::post('/generate-credentials',               [UserController::class, 'generateCredentials'])->name('generate-credentials');

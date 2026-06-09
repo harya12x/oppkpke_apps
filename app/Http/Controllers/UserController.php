@@ -75,6 +75,62 @@ class UserController extends Controller
     }
 
     // =========================================
+    // EXPORT PDF — rekap seluruh pengguna (print-optimized)
+    // =========================================
+
+    public function exportPdf(Request $request)
+    {
+        $query = User::with('perangkatDaerah')->orderByRaw("FIELD(role,'master','daerah')")->orderBy('name');
+
+        // Terapkan filter yang sama dengan halaman index agar PDF konsisten
+        $filters = [];
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+            $filters['Pencarian'] = $search;
+        }
+
+        if ($request->filled('role')) {
+            $query->where('role', $request->role);
+            $filters['Role'] = $request->role === 'master' ? 'Admin Master' : 'Operator Daerah';
+        }
+
+        if ($request->filled('perangkat_daerah_id')) {
+            $query->where('perangkat_daerah_id', $request->perangkat_daerah_id);
+            $pd = PerangkatDaerah::find($request->perangkat_daerah_id);
+            $filters['Perangkat Daerah'] = $pd?->nama ?? '—';
+        }
+
+        if ($request->filled('status')) {
+            $query->where('is_active', $request->status === 'active');
+            $filters['Status'] = $request->status === 'active' ? 'Aktif' : 'Nonaktif';
+        }
+
+        $users = $query->get();
+
+        // Ringkasan dihitung dari hasil terfilter agar selaras dengan isi tabel
+        $summary = [
+            'total'    => $users->count(),
+            'master'   => $users->where('role', 'master')->count(),
+            'daerah'   => $users->where('role', 'daerah')->count(),
+            'active'   => $users->where('is_active', true)->count(),
+            'inactive' => $users->where('is_active', false)->count(),
+        ];
+
+        return view('admin.users.pdf', [
+            'users'      => $users,
+            'summary'    => $summary,
+            'filters'    => $filters,
+            'generatedAt'=> now(),
+            'generatedBy'=> auth()->user(),
+        ]);
+    }
+
+    // =========================================
     // STORE — buat user baru
     // =========================================
 

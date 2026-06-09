@@ -110,6 +110,12 @@
         </a>
 
         <div class="ml-auto flex items-center gap-2">
+            <button type="button" onclick="exportPdf()"
+                    class="bg-red-600 hover:bg-red-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+                <i class="fas fa-file-pdf"></i>
+                <span class="hidden sm:inline">Export PDF</span>
+                <span class="sm:hidden">PDF</span>
+            </button>
             <button type="button" onclick="openGenerateModal()"
                     class="bg-purple-600 hover:bg-purple-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
                 <i class="fas fa-wand-magic-sparkles"></i>
@@ -739,6 +745,22 @@
 <script>
 // ── Data dari PHP ──────────────────────────────────────────────────────
 var pdData = @json($pdInfo);
+
+// ── Export PDF (buka view cetak dengan filter aktif) ───────────────────
+function exportPdf() {
+    var params = new URLSearchParams();
+    var search = document.querySelector('input[name="search"]').value.trim();
+    var role   = document.getElementById('filterRole').value;
+    var pd     = document.getElementById('filterPd').value;
+    var status = document.getElementById('filterStatus').value;
+    if (search) params.set('search', search);
+    if (role)   params.set('role', role);
+    if (pd)     params.set('perangkat_daerah_id', pd);
+    if (status) params.set('status', status);
+    var qs  = params.toString();
+    var url = "{{ route('admin.users.export-pdf') }}" + (qs ? ('?' + qs) : '');
+    window.open(url, '_blank');
+}
 
 // ── State ──────────────────────────────────────────────────────────────
 var currentUserId   = null;
