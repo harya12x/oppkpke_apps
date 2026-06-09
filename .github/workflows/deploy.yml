@@ -17,7 +17,9 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
+          script_stop: true
           script: |
+            set -e
             cd /var/www/oppkpke_apps
 
             echo "========================================"
@@ -25,19 +27,29 @@ jobs:
             echo "========================================"
 
             # ----------------------------------------
-            # STEP 1: Pull latest code
+            # STEP 1: Sinkronkan kode (paksa sama dengan repo)
+            # reset --hard mencegah deploy gagal gara-gara
+            # perubahan lokal di server yang memblokir merge.
             # ----------------------------------------
-            echo "📥 Pull latest code dari GitHub..."
-            git pull origin main
+            echo "📥 Sinkronkan kode dari GitHub..."
+            BEFORE=$(git rev-parse HEAD)
+            git fetch origin main
+            git reset --hard origin/main
+            AFTER=$(git rev-parse HEAD)
+
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "ℹ️  Tidak ada commit baru ($AFTER), lanjut rebuild cache saja."
+            else
+              echo "✅ Update: $BEFORE -> $AFTER"
+            fi
 
             # ----------------------------------------
             # STEP 2: Cek perubahan dependency
             # ----------------------------------------
-            COMPOSER_CHANGED=$(git diff HEAD@{1} HEAD -- composer.lock | wc -l)
-            PACKAGE_CHANGED=$(git diff HEAD@{1} HEAD -- package-lock.json | wc -l)
-            DOCKERFILE_CHANGED=$(git diff HEAD@{1} HEAD -- Dockerfile | wc -l)
+            CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
+            echo "$CHANGED_FILES" | grep -qE '^(composer\.lock|package-lock\.json|Dockerfile)$' && DEP_CHANGED=1 || DEP_CHANGED=0
 
-            if [ "$COMPOSER_CHANGED" -gt 0 ] || [ "$PACKAGE_CHANGED" -gt 0 ] || [ "$DOCKERFILE_CHANGED" -gt 0 ]; then
+            if [ "$DEP_CHANGED" -eq 1 ]; then
 
               # ----------------------------------------
               # Kondisi A: Ada perubahan dependency
@@ -65,7 +77,8 @@ jobs:
               docker compose exec -T app php artisan migrate --force
 
               echo "♻️  Reload PHP-FPM (tanpa restart container)..."
-              docker compose exec -T app kill -USR2 1
+              # 'kill' adalah builtin shell, bukan binary — jalankan lewat sh.
+              docker compose exec -T app sh -c 'kill -USR2 1'
 
             fi
 
@@ -76,7 +89,7 @@ jobs:
             sleep 3
 
             echo "🔗 Buat storage symlink..."
-            docker compose exec -T app php artisan storage:link
+            docker compose exec -T app php artisan storage:link || true
 
             echo "🧹 Clear & rebuild cache..."
             docker compose exec -T app php artisan config:clear
