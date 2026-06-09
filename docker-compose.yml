@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     working_dir: /var/www
     volumes:
+      # .env tidak di-bake ke image (lihat .dockerignore) — mount dari host
+      # supaya APP_KEY & kredensial DB tersedia di setiap container baru.
+      - ./.env:/var/www/.env:ro
       - storage_data:/var/www/storage
       - cache_data:/var/www/bootstrap/cache
     extra_hosts:

@@ -17,10 +17,8 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
-          script_stop: true
           script: |
             set -e
-            set -x   # trace tiap perintah ke stderr (stderr streamed live, tidak hilang saat abort)
             cd /var/www/oppkpke_apps
 
             echo "========================================"
