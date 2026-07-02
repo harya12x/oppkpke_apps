@@ -142,14 +142,24 @@
     </h3>
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         @foreach($stats['per_strategi'] ?? [] as $strategi)
-        @php $bgColor = ['1' => 'blue', '2' => 'green', '3' => 'orange'][$strategi['kode']] ?? 'blue'; @endphp
+        @php
+            // Kelas Tailwind harus literal (bukan dibentuk dari variabel) supaya
+            // ke-scan compiler saat build produksi — lihat @source di resources/css/app.css.
+            $colorClasses = [
+                'blue'   => ['icon_bg' => 'bg-blue-100',   'icon_text' => 'text-blue-600',   'badge_bg' => 'bg-blue-100',   'badge_text' => 'text-blue-700',   'bar' => 'bg-blue-500'],
+                'green'  => ['icon_bg' => 'bg-green-100',  'icon_text' => 'text-green-600',  'badge_bg' => 'bg-green-100',  'badge_text' => 'text-green-700',  'bar' => 'bg-green-500'],
+                'orange' => ['icon_bg' => 'bg-orange-100', 'icon_text' => 'text-orange-600', 'badge_bg' => 'bg-orange-100', 'badge_text' => 'text-orange-700', 'bar' => 'bg-orange-500'],
+            ];
+            $bgColor = ['1' => 'blue', '2' => 'green', '3' => 'orange'][$strategi['kode']] ?? 'blue';
+            $cc = $colorClasses[$bgColor];
+        @endphp
         <a href="{{ route('oppkpke.explorer', ['strategi_id' => $strategi['id'], 'tahun' => $tahun]) }}"
            class="bg-white rounded-xl shadow-sm border p-5 hover:shadow-lg transition group block">
             <div class="flex items-start justify-between mb-3">
-                <div class="w-12 h-12 bg-{{ $bgColor }}-100 rounded-xl flex items-center justify-center">
-                    <i class="fas fa-{{ $strategi['icon'] ?? 'folder' }} text-{{ $bgColor }}-600 text-xl"></i>
+                <div class="w-12 h-12 {{ $cc['icon_bg'] }} rounded-xl flex items-center justify-center">
+                    <i class="fas fa-{{ $strategi['icon'] ?? 'folder' }} {{ $cc['icon_text'] }} text-xl"></i>
                 </div>
-                <span class="text-xs bg-{{ $bgColor }}-100 text-{{ $bgColor }}-700 px-2.5 py-1 rounded-full">
+                <span class="text-xs {{ $cc['badge_bg'] }} {{ $cc['badge_text'] }} px-2.5 py-1 rounded-full">
                     {{ $strategi['total_program'] }} Program
                 </span>
             </div>
@@ -171,7 +181,7 @@
                         <span>{{ $strategi['persentase'] }}%</span>
                     </div>
                     <div class="w-full bg-gray-200 rounded-full h-2">
-                        <div class="bg-{{ $bgColor }}-500 h-2 rounded-full" style="width: {{ min($strategi['persentase'], 100) }}%"></div>
+                        <div class="{{ $cc['bar'] }} h-2 rounded-full" style="width: {{ min($strategi['persentase'], 100) }}%"></div>
                     </div>
                 </div>
             </div>
