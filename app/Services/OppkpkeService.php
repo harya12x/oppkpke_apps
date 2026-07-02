@@ -10,6 +10,7 @@ use App\Models\SubKegiatan;
 use App\Models\LaporanOppkpke;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class OppkpkeService
 {
@@ -216,17 +217,27 @@ class OppkpkeService
     public function createOrUpdateLaporan(int $subKegiatanId, int $tahun, array $data): LaporanOppkpke
     {
         $data['realisasi_total'] = ($data['realisasi_sem1'] ?? 0) + ($data['realisasi_sem2'] ?? 0);
+        $data['semester'] = $data['semester'] ?? 2;
         $data['updated_by'] = auth()->id();
+        // created_by TIDAK dimasukkan ke $data di sini — updateOrCreate() mengisi
+        // $values ke model baik saat create maupun update, jadi kalau created_by
+        // ikut di $values ia akan tertimpa setiap kali laporan yang sama diedit,
+        // menghapus jejak siapa pembuat aslinya.
+        unset($data['created_by']);
 
-        return LaporanOppkpke::updateOrCreate(
-            [
-                'sub_kegiatan_id' => $subKegiatanId,
-                'tahun' => $tahun,
-            ],
-            array_merge($data, [
-                'created_by' => auth()->id(),
-            ])
-        );
+        $laporan = LaporanOppkpke::firstOrNew([
+            'sub_kegiatan_id' => $subKegiatanId,
+            'tahun' => $tahun,
+        ]);
+
+        if (!$laporan->exists) {
+            $data['created_by'] = auth()->id();
+        }
+
+        $laporan->fill($data);
+        $laporan->save();
+
+        return $laporan;
     }
 
     public function bulkUpdateLaporan(array $items): int
@@ -245,6 +256,289 @@ class OppkpkeService
         }
 
         return $updated;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // IMPORT EXECUTION (dipanggil dari queue Job — lihat app/Jobs/)
+    // Dipindah dari OppkpkeController::importExecute()/importRatExecute() apa
+    // adanya, hanya dibungkus DB::transaction supaya penghapusan replace_year
+    // dan loop insert/update jadi satu unit atomik (dulu tidak dalam transaksi
+    // sama sekali — kegagalan di tengah loop meninggalkan delete ter-commit
+    // tapi insert baru sebagian, tanpa rollback).
+    // ══════════════════════════════════════════════════════════════
+
+    public function executeImport(array $cached, array $skip, bool $replaceYear, int $userId): array
+    {
+        return DB::transaction(function () use ($cached, $skip, $replaceYear, $userId) {
+            $imported  = 0;
+            $updated   = 0;
+            $skipped   = 0;
+            $createdSk = 0;
+            $deleted   = 0;
+
+            if ($replaceYear) {
+                $importSkIds = collect($cached['rows'])
+                    ->filter(fn($r) => in_array($r['status'], ['matched', 'new_sk']) && !in_array((string) $r['row_num'], $skip))
+                    ->pluck('sub_kegiatan_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->toArray();
+
+                if (!empty($importSkIds)) {
+                    $deleted = LaporanOppkpke::where('tahun', $cached['tahun'])
+                        ->whereNotIn('sub_kegiatan_id', $importSkIds)
+                        ->delete();
+                }
+            }
+
+            foreach ($cached['rows'] as $row) {
+                if (in_array($row['status'], ['not_found', 'duplicate'])) { $skipped++; continue; }
+                if (in_array((string) $row['row_num'], $skip)) { $skipped++; continue; }
+
+                $skId = $row['sub_kegiatan_id'];
+
+                if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
+                    $newSk = SubKegiatan::firstOrCreate(
+                        ['kegiatan_id' => $row['kegiatan_id'], 'nama_sub_kegiatan' => $row['sub_kegiatan']],
+                        ['is_active' => true]
+                    );
+                    $skId = $newSk->id;
+                    if ($newSk->wasRecentlyCreated) $createdSk++;
+                }
+
+                if (!$skId) { $skipped++; continue; }
+
+                $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
+                    ->where('tahun', $cached['tahun'])->first();
+
+                $sem1 = (float) ($row['realisasi_sem1'] ?? 0);
+                $sem2 = (float) ($row['realisasi_sem2'] ?? 0);
+                $tot  = (float) ($row['realisasi_total'] ?? 0);
+                $realisasiTotal = max($tot, $sem1 + $sem2);
+                if ($realisasiTotal <= 0 && ($sem1 + $sem2) > 0) $realisasiTotal = $sem1 + $sem2;
+
+                $payload = [
+                    'semester'                 => $cached['semester'],
+                    'alokasi_anggaran'         => (float) ($row['alokasi_anggaran'] ?? 0),
+                    'realisasi_sem1'           => $sem1,
+                    'realisasi_sem2'           => $sem2,
+                    'realisasi_total'          => $realisasiTotal,
+                    'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
+                    'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
+                    'lokasi'                   => $row['lokasi'] ?: null,
+                    'jumlah_sasaran'           => $row['jumlah_sasaran'] ?: null,
+                    'besaran_manfaat'          => $row['besaran_manfaat'] ?: null,
+                    'jenis_bantuan'            => $row['jenis_bantuan'] ?: null,
+                    'durasi_pemberian'         => $row['durasi_pemberian'] ?: null,
+                    'aktivitas_langsung'       => $row['aktivitas_langsung'] ?: null,
+                    'aktivitas_tidak_langsung' => $row['aktivitas_tidak_langsung'] ?: null,
+                    'aktivitas_penunjang'      => $row['aktivitas_penunjang'] ?: null,
+                    'updated_by'               => $userId,
+                ];
+
+                if ($exists) {
+                    $exists->update($payload);
+                    $updated++;
+                } else {
+                    $payload['sub_kegiatan_id'] = $skId;
+                    $payload['tahun']           = $cached['tahun'];
+                    $payload['created_by']      = $userId;
+                    LaporanOppkpke::create($payload);
+                    $imported++;
+                }
+            }
+
+            return [
+                'imported'   => $imported,
+                'updated'    => $updated,
+                'skipped'    => $skipped,
+                'created_sk' => $createdSk,
+                'deleted'    => $deleted,
+            ];
+        });
+    }
+
+    public function executeRatImport(array $cached, array $skip, bool $replaceYear, int $userId): array
+    {
+        return DB::transaction(function () use ($cached, $skip, $replaceYear, $userId) {
+            $imported       = 0;
+            $updated        = 0;
+            $skipped        = 0;
+            $createdSk      = 0;
+            $createdHier    = 0;
+            $createdPd      = 0;
+            $skippedDup     = 0;
+            $processedSkIds = [];
+
+            foreach ($cached['rows'] as $row) {
+                $rowNumStr = (string) $row['row_num'];
+
+                if (in_array($rowNumStr, $skip)) { $skipped++; continue; }
+                if ($row['status'] === 'duplicate') { $skippedDup++; continue; }
+
+                $skId = $row['sub_kegiatan_id'];
+
+                if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
+                    $newSk = SubKegiatan::firstOrCreate(
+                        ['kegiatan_id' => $row['kegiatan_id'], 'nama_sub_kegiatan' => $row['sub_kegiatan']],
+                        ['is_active' => true]
+                    );
+                    $skId = $newSk->id;
+                    if ($newSk->wasRecentlyCreated) $createdSk++;
+                }
+
+                if ($row['status'] === 'not_found') {
+                    $skId = $this->forceCreateSkFromRow($row, $userId, $createdHier, $createdPd);
+                    if (!$skId) { $skipped++; continue; }
+                }
+
+                if (!$skId) { $skipped++; continue; }
+
+                $processedSkIds[] = $skId;
+
+                $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
+                    ->where('tahun', $cached['tahun'])->first();
+
+                $payload = [
+                    'alokasi_anggaran'         => $row['alokasi_anggaran'],
+                    'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
+                    'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
+                    'lokasi'                   => $row['lokasi'] ?: null,
+                    'jumlah_sasaran'           => $row['jumlah_sasaran'] ?: null,
+                    'besaran_manfaat'          => $row['besaran_manfaat'] ?: null,
+                    'jenis_bantuan'            => $row['jenis_bantuan'] ?: null,
+                    'durasi_pemberian'         => $row['durasi_pemberian'] ?: null,
+                    'aktivitas_langsung'       => $row['aktivitas_langsung'] ?: null,
+                    'aktivitas_tidak_langsung' => $row['aktivitas_tidak_langsung'] ?: null,
+                    'aktivitas_penunjang'      => $row['aktivitas_penunjang'] ?: null,
+                    'updated_by'               => $userId,
+                ];
+
+                if ($exists) {
+                    $exists->update($payload);
+                    $updated++;
+                } else {
+                    $payload['sub_kegiatan_id'] = $skId;
+                    $payload['tahun']           = $cached['tahun'];
+                    $payload['semester']        = 1;
+                    $payload['realisasi_sem1']  = 0;
+                    $payload['realisasi_sem2']  = 0;
+                    $payload['realisasi_total'] = 0;
+                    $payload['created_by']      = $userId;
+                    LaporanOppkpke::create($payload);
+                    $imported++;
+                }
+            }
+
+            $deleted = 0;
+            if ($replaceYear && !empty($processedSkIds)) {
+                $deleted = LaporanOppkpke::where('tahun', $cached['tahun'])
+                    ->whereNotIn('sub_kegiatan_id', array_unique($processedSkIds))
+                    ->delete();
+            }
+
+            return [
+                'imported'     => $imported,
+                'updated'      => $updated,
+                'skipped'      => $skipped,
+                'created_sk'   => $createdSk,
+                'created_hier' => $createdHier,
+                'created_pd'   => $createdPd,
+                'skipped_dup'  => $skippedDup,
+                'deleted'      => $deleted,
+            ];
+        });
+    }
+
+    // Dipindah dari OppkpkeController — helper khusus import RAT untuk
+    // membangun hierarki (perangkat daerah → program → kegiatan → sub kegiatan)
+    // secara otomatis dari kolom file saat baris tidak cocok dengan data yang ada.
+    private function forceCreateSkFromRow(array $row, int $userId, int &$created, int &$createdPd = 0): ?int
+    {
+        $pdName   = trim($row['perangkat_daerah'] ?? '');
+        $progName = trim($row['program'] ?? '');
+        $kegName  = trim($row['kegiatan'] ?? '');
+        $skName   = trim($row['sub_kegiatan'] ?? '');
+
+        if (!$pdName || !$skName) return null;
+
+        $normalize = fn(string $s) => strtolower(preg_replace('/\s+/', ' ', trim($s)));
+        $pd = PerangkatDaerah::all()->first(fn($p) =>
+            $normalize($p->nama) === $normalize($pdName) ||
+            str_contains($normalize($p->nama), $normalize($pdName)) ||
+            str_contains($normalize($pdName), $normalize($p->nama))
+        );
+        if (!$pd) {
+            $pd = PerangkatDaerah::create([
+                'nama'      => $pdName,
+                'is_active' => true,
+            ]);
+            $createdPd++;
+        }
+
+        $prog = null;
+        if ($progName) {
+            $prog = Program::where('perangkat_daerah_id', $pd->id)->get()->first(fn($p) =>
+                $normalize($p->nama_program) === $normalize($progName) ||
+                str_contains($normalize($p->nama_program), $normalize($progName)) ||
+                str_contains($normalize($progName), $normalize($p->nama_program))
+            );
+            if (!$prog && !empty($row['kode'])) {
+                $prog = Program::where('perangkat_daerah_id', $pd->id)
+                    ->where('kode_program', $row['kode'])
+                    ->first();
+            }
+            if (!$prog) {
+                $stratNorm = $normalize($row['strategi'] ?? '');
+                $strategi  = StrategiOppkpke::where('is_active', true)->get()->first(fn($s) =>
+                    str_contains($stratNorm, $normalize($s->kode)) ||
+                    str_contains($stratNorm, $normalize($s->nama))
+                ) ?? StrategiOppkpke::where('is_active', true)->orderBy('id')->first();
+
+                if ($strategi) {
+                    $prog = Program::firstOrCreate(
+                        [
+                            'strategi_id'         => $strategi->id,
+                            'perangkat_daerah_id' => $pd->id,
+                            'kode_program'        => $row['kode'] ?? '',
+                        ],
+                        [
+                            'nama_program' => $progName,
+                            'is_active'    => true,
+                        ]
+                    );
+                }
+            }
+        }
+
+        if (!$prog) {
+            $prog = Program::where('perangkat_daerah_id', $pd->id)->first();
+        }
+        if (!$prog) return null;
+
+        $keg = null;
+        if ($kegName) {
+            $keg = Kegiatan::where('program_id', $prog->id)->get()->first(fn($k) =>
+                $normalize($k->nama_kegiatan) === $normalize($kegName) ||
+                str_contains($normalize($k->nama_kegiatan), $normalize($kegName)) ||
+                str_contains($normalize($kegName), $normalize($k->nama_kegiatan))
+            );
+        }
+        if (!$keg) {
+            $keg = Kegiatan::firstOrCreate(
+                ['program_id' => $prog->id, 'nama_kegiatan' => $kegName ?: 'Kegiatan ' . $skName],
+                ['is_active' => true]
+            );
+        }
+
+        $sk = SubKegiatan::firstOrCreate(
+            ['kegiatan_id' => $keg->id, 'nama_sub_kegiatan' => $skName],
+            ['is_active' => true]
+        );
+
+        if ($sk->wasRecentlyCreated) $created++;
+        return $sk->id;
     }
 
     // ══════════════════════════════════════════════════════════════

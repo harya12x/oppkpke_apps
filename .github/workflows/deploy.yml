@@ -54,8 +54,15 @@ jobs:
             echo "🗄️  Jalankan migrasi (di container yang sedang jalan)..."
             docker compose exec -T app php artisan migrate --force
 
+            echo "📣 Sinyal queue:restart supaya worker lama selesai job berjalan dulu..."
+            # || true: aman kalau ini deploy pertama kali dan worker belum pernah ada.
+            docker compose exec -T app php artisan queue:restart || true
+
             echo "⚡ Swap ke container baru (downtime < 1 detik)..."
-            docker compose up -d --no-deps app
+            # worker ikut di-recreate: kode di-bake ke image sama seperti app
+            # (tidak ada bind-mount kode), jadi worker HARUS di-recreate juga supaya
+            # menjalankan kode/Job class terbaru. --no-deps mencegah nginx ikut restart.
+            docker compose up -d --no-deps app worker
 
             # ----------------------------------------
             # STEP 3: Post-deploy artisan commands

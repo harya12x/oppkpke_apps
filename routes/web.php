@@ -51,6 +51,8 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     Route::get('/laporan', [OppkpkeController::class, 'laporan'])->name('laporan.index');
     Route::post('/laporan', [OppkpkeController::class, 'store'])->name('laporan.store');
     Route::put('/laporan/{id}', [OppkpkeController::class, 'update'])->name('laporan.update');
+    // batch HARUS terdaftar sebelum {id} — kalau tidak, "batch" akan tertangkap sebagai {id}.
+    Route::delete('/laporan/batch', [OppkpkeController::class, 'batchDestroy'])->name('laporan.batch-destroy');
     Route::delete('/laporan/{id}', [OppkpkeController::class, 'destroy'])->name('laporan.destroy');
 
     // --------------------------------------------------
@@ -70,6 +72,7 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     Route::get('/import', [OppkpkeController::class, 'importPage'])->name('import');
     Route::post('/import/preview', [OppkpkeController::class, 'importPreview'])->name('import.preview');
     Route::post('/import/execute', [OppkpkeController::class, 'importExecute'])->name('import.execute');
+    Route::get('/import/status', [OppkpkeController::class, 'importStatus'])->name('import.status');
 
     // --------------------------------------------------
     // IMPORT DATA — Matriks RAT 18 kolom

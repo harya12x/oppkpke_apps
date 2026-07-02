@@ -9,6 +9,13 @@ use App\Models\Program;
 use App\Models\Kegiatan;
 use App\Models\SubKegiatan;
 use App\Models\LaporanOppkpke;
+use App\Services\OppkpkeService;
+use App\Http\Requests\LaporanOppkpkeRequest;
+use App\Jobs\ProcessLaporanImportJob;
+use App\Jobs\ProcessLaporanRatImportJob;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -18,6 +25,8 @@ use PhpOffice\PhpSpreadsheet\Style\Font;
 
 class OppkpkeController extends Controller
 {
+    public function __construct(private OppkpkeService $oppkpkeService) {}
+
     // =========================================
     // HALAMAN UTAMA
     // =========================================
@@ -179,37 +188,28 @@ class OppkpkeController extends Controller
         return view('oppkpke.index', compact('filterOptions'));
     }
 
-    public function store(Request $request)
+    public function store(LaporanOppkpkeRequest $request)
     {
-        $validated = $request->validate([
-            'id'                      => 'nullable|exists:laporan_oppkpke,id',
-            'sub_kegiatan_id'         => 'required|exists:sub_kegiatan,id',
-            'tahun'                   => 'required|integer|min:2020|max:2035',
-            'semester'                => 'nullable|integer|in:1,2',
-            'penerima_langsung'       => 'nullable|numeric|min:0',
-            'penerima_tidak_langsung' => 'nullable|numeric|min:0',
-            'penerima_penunjang'      => 'nullable|numeric|min:0',
-            'alokasi_anggaran'        => 'required|numeric|min:0',
-            'realisasi_sem1'          => 'nullable|numeric|min:0',
-            'realisasi_sem2'          => 'nullable|numeric|min:0',
-            'sumber_pembiayaan'       => 'nullable|string|max:50',
-            'sifat_bantuan'           => 'nullable|string|max:100',
-            'lokasi'                  => 'nullable|string|max:255',
-            'jumlah_sasaran'          => 'nullable|string|max:100',
-            'satuan_sasaran'          => 'nullable|string|max:50',
-            'aktivitas_langsung'      => 'nullable|string',
-            'aktivitas_tidak_langsung'=> 'nullable|string',
-            'aktivitas_penunjang'     => 'nullable|string',
-            'besaran_manfaat'         => 'nullable|string|max:255',
-            'jenis_bantuan'           => 'nullable|string|max:100',
-            'durasi_pemberian'        => 'nullable|string|max:100',
-        ]);
+        return $this->saveLaporan($request, $request->input('id'));
+    }
 
-        $validated['realisasi_total'] = ($validated['realisasi_sem1'] ?? 0) + ($validated['realisasi_sem2'] ?? 0);
-        $validated['semester']        = $validated['semester'] ?? 2;
+    public function update(LaporanOppkpkeRequest $request, $id)
+    {
+        return $this->saveLaporan($request, $id);
+    }
+
+    // Catatan: update() dulu memanggil $this->store($request) secara langsung (bukan
+    // lewat router) — kalau store() diberi type-hint LaporanOppkpkeRequest, panggilan
+    // PHP langsung seperti itu akan MELEWATI validasi FormRequest sepenuhnya (validasi
+    // form request hanya terpicu saat Laravel me-resolve action dari container). Karena
+    // itu store()/update() sekarang masing-masing type-hint sendiri dan berbagi logika
+    // lewat method private ini.
+    private function saveLaporan(LaporanOppkpkeRequest $request, $id = null)
+    {
+        $validated = $request->validated();
+        $user      = auth()->user();
 
         // Daerah user: pastikan sub_kegiatan milik perangkat_daerah mereka
-        $user = auth()->user();
         if ($user->isDaerah() && $user->perangkat_daerah_id) {
             $allowed = SubKegiatan::whereHas('kegiatan.program', fn($q) => $q->where('perangkat_daerah_id', $user->perangkat_daerah_id))
                 ->pluck('id')
@@ -220,40 +220,29 @@ class OppkpkeController extends Controller
             }
         }
 
-        // Track who modified
-        $validated['updated_by'] = $user->id;
-
         try {
-            if ($request->filled('id')) {
-                $laporan = LaporanOppkpke::findOrFail($request->id);
-                $laporan->update($validated);
-                $message = 'Data berhasil diperbarui';
-            } else {
-                $exists = LaporanOppkpke::where('sub_kegiatan_id', $validated['sub_kegiatan_id'])
-                    ->where('tahun', $validated['tahun'])
-                    ->first();
+            $this->oppkpkeService->createOrUpdateLaporan(
+                (int) $validated['sub_kegiatan_id'],
+                (int) $validated['tahun'],
+                $validated
+            );
 
-                if ($exists) {
-                    $exists->update($validated);
-                    $message = 'Data berhasil diperbarui';
-                } else {
-                    $validated['created_by'] = $user->id;
-                    LaporanOppkpke::create($validated);
-                    $message = 'Data berhasil ditambahkan';
-                }
+            return response()->json([
+                'success' => true,
+                'message' => $id ? 'Data berhasil diperbarui' : 'Data berhasil ditambahkan',
+            ]);
+        } catch (QueryException $e) {
+            // Kode 23000 = unique/FK constraint violation. FormRequest sudah mencegah
+            // ini di jalur normal (Rule::unique), tapi race antar dua request nyaris
+            // bersamaan tetap bisa lolos validasi lalu bentrok di DB — tangani dengan
+            // pesan ramah, jangan bocorkan pesan SQL mentah ke client.
+            if ($e->getCode() === '23000') {
+                return response()->json(['success' => false, 'message' => 'Data untuk sub kegiatan dan tahun ini sudah ada.'], 422);
             }
 
-            return response()->json(['success' => true, 'message' => $message]);
-
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan: ' . $e->getMessage()], 500);
+            Log::channel('audit')->error('Gagal simpan laporan', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan sistem, silakan coba lagi.'], 500);
         }
-    }
-
-    public function update(Request $request, $id)
-    {
-        $request->merge(['id' => $id]);
-        return $this->store($request);
     }
 
     public function destroy($id)
@@ -277,6 +266,39 @@ class OppkpkeController extends Controller
         } catch (\Exception $e) {
             return response()->json(['success' => false, 'message' => 'Gagal menghapus data'], 500);
         }
+    }
+
+    public function batchDestroy(Request $request)
+    {
+        $request->validate([
+            'ids'   => 'required|array|min:1|max:200',
+            'ids.*' => 'integer|exists:laporan_oppkpke,id',
+        ], ['ids.max' => 'Maksimal 200 data per batch hapus.']);
+
+        $user  = auth()->user();
+        $query = LaporanOppkpke::whereIn('id', $request->ids);
+
+        // Daerah user: hanya bisa hapus data miliknya — sama seperti destroy()
+        if ($user->isDaerah() && $user->perangkat_daerah_id) {
+            $allowedSkIds = SubKegiatan::whereHas('kegiatan.program', fn($q) => $q->where('perangkat_daerah_id', $user->perangkat_daerah_id))
+                ->pluck('id');
+            $query->whereIn('sub_kegiatan_id', $allowedSkIds);
+        }
+
+        $deleted = DB::transaction(fn () => $query->delete());
+
+        Log::channel('audit')->info('Batch hapus laporan', [
+            'user_id' => $user->id,
+            'ids'     => $request->ids,
+            'deleted' => $deleted,
+        ]);
+
+        $skippedNote = $deleted < count($request->ids) ? ' (sebagian dilewati karena bukan wewenang Anda)' : '.';
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$deleted} data berhasil dihapus{$skippedNote}",
+        ]);
     }
 
     // =========================================
@@ -450,101 +472,35 @@ class OppkpkeController extends Controller
     {
         $request->validate(['cache_key' => 'required|string']);
 
-        $cached = cache()->get($request->cache_key);
+        // Idempotency gate: ambil + hapus cache key SEBELUM proses apa pun dimulai
+        // (bukan di akhir seperti sebelumnya) — mempersempit jendela race double-submit
+        // (mis. klik ganda sebelum tombol disable) dari "sepanjang durasi import" jadi
+        // hanya beberapa milidetik.
+        $cached = cache()->pull($request->cache_key);
         if (!$cached) {
-            return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa (2 jam). Silakan upload ulang.']);
+            return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa atau sudah diproses. Silakan upload ulang.']);
         }
 
-        $user       = auth()->user();
-        $skip       = $request->input('skip', []);
-        $imported   = 0;
-        $updated    = 0;
-        $skipped    = 0;
-        $createdSk  = 0;
-        $deleted    = 0;
+        $statusKey = 'oppkpke_import_status_' . auth()->id() . '_' . uniqid();
+        cache()->put($statusKey, ['state' => 'processing'], now()->addHour());
 
-        // Sinkronisasi Penuh: hapus record lama tahun ini yang tidak ada di file
-        if ($request->boolean('replace_year')) {
-            $importSkIds = collect($cached['rows'])
-                ->filter(fn($r) => in_array($r['status'], ['matched', 'new_sk']) && !in_array((string)$r['row_num'], $skip))
-                ->pluck('sub_kegiatan_id')
-                ->filter()
-                ->unique()
-                ->values()
-                ->toArray();
+        ProcessLaporanImportJob::dispatch(
+            $cached,
+            $request->input('skip', []),
+            $request->boolean('replace_year'),
+            auth()->id(),
+            $statusKey
+        );
 
-            if (!empty($importSkIds)) {
-                $deleted = LaporanOppkpke::where('tahun', $cached['tahun'])
-                    ->whereNotIn('sub_kegiatan_id', $importSkIds)
-                    ->delete();
-            }
-        }
+        return redirect()->route('oppkpke.import')
+            ->with('info', 'Import sedang diproses di background.')
+            ->with('import_status_key', $statusKey);
+    }
 
-        foreach ($cached['rows'] as $row) {
-            if (in_array($row['status'], ['not_found', 'duplicate'])) { $skipped++; continue; }
-            if (in_array((string)$row['row_num'], $skip)) { $skipped++; continue; }
-
-            $skId = $row['sub_kegiatan_id'];
-
-            // Auto-create sub_kegiatan if it matched a kegiatan name
-            if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
-                $newSk = SubKegiatan::firstOrCreate(
-                    ['kegiatan_id' => $row['kegiatan_id'], 'nama_sub_kegiatan' => $row['sub_kegiatan']],
-                    ['is_active' => true]
-                );
-                $skId = $newSk->id;
-                if ($newSk->wasRecentlyCreated) $createdSk++;
-            }
-
-            if (!$skId) { $skipped++; continue; }
-
-            $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
-                ->where('tahun', $cached['tahun'])->first();
-
-            $sem1 = (float) ($row['realisasi_sem1'] ?? 0);
-            $sem2 = (float) ($row['realisasi_sem2'] ?? 0);
-            $tot  = (float) ($row['realisasi_total'] ?? 0);
-            // Pastikan realisasi_total konsisten: gunakan yang lebih besar antara kolom total atau sem1+sem2
-            $realisasiTotal = max($tot, $sem1 + $sem2);
-            if ($realisasiTotal <= 0 && ($sem1 + $sem2) > 0) $realisasiTotal = $sem1 + $sem2;
-
-            $payload = [
-                'semester'                 => $cached['semester'],
-                'alokasi_anggaran'         => (float) ($row['alokasi_anggaran'] ?? 0),
-                'realisasi_sem1'           => $sem1,
-                'realisasi_sem2'           => $sem2,
-                'realisasi_total'          => $realisasiTotal,
-                'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
-                'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
-                'lokasi'                   => $row['lokasi'] ?: null,
-                'jumlah_sasaran'           => $row['jumlah_sasaran'] ?: null,
-                'besaran_manfaat'          => $row['besaran_manfaat'] ?: null,
-                'jenis_bantuan'            => $row['jenis_bantuan'] ?: null,
-                'durasi_pemberian'         => $row['durasi_pemberian'] ?: null,
-                'aktivitas_langsung'       => $row['aktivitas_langsung'] ?: null,
-                'aktivitas_tidak_langsung' => $row['aktivitas_tidak_langsung'] ?: null,
-                'aktivitas_penunjang'      => $row['aktivitas_penunjang'] ?: null,
-                'updated_by'               => $user->id,
-            ];
-
-            if ($exists) {
-                $exists->update($payload);
-                $updated++;
-            } else {
-                $payload['sub_kegiatan_id'] = $skId;
-                $payload['tahun']           = $cached['tahun'];
-                $payload['created_by']      = $user->id;
-                LaporanOppkpke::create($payload);
-                $imported++;
-            }
-        }
-
-        cache()->forget($request->cache_key);
-
-        $skMsg  = $createdSk > 0 ? ", {$createdSk} sub kegiatan baru dibuat" : '';
-        $delMsg = $deleted > 0 ? ", {$deleted} record lama dihapus (sinkronisasi penuh)" : '';
-        $msg    = "Import selesai! {$updated} data diperbarui, {$imported} data baru ditambahkan{$skMsg}{$delMsg}, {$skipped} dilewati.";
-        return redirect()->route('oppkpke.import')->with('success', $msg);
+    public function importStatus(Request $request)
+    {
+        $request->validate(['key' => 'required|string']);
+        return response()->json(cache()->get($request->key) ?? ['state' => 'unknown']);
     }
 
     // =========================================
@@ -622,200 +578,26 @@ class OppkpkeController extends Controller
     {
         $request->validate(['cache_key' => 'required|string']);
 
-        $cached = cache()->get($request->cache_key);
+        // Idempotency gate — lihat catatan di importExecute().
+        $cached = cache()->pull($request->cache_key);
         if (!$cached) {
-            return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa (2 jam). Silakan upload ulang.']);
+            return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa atau sudah diproses. Silakan upload ulang.']);
         }
 
-        $user         = auth()->user();
-        $skip         = $request->input('skip', []);
-        $imported     = 0;
-        $updated      = 0;
-        $skipped      = 0;
-        $createdSk    = 0;
-        $createdHier  = 0;
-        $createdPd    = 0;
-        $processedSkIds = [];
+        $statusKey = 'oppkpke_rat_status_' . auth()->id() . '_' . uniqid();
+        cache()->put($statusKey, ['state' => 'processing'], now()->addHour());
 
-        $skippedDup = 0;
-        foreach ($cached['rows'] as $row) {
-            $rowNumStr = (string) $row['row_num'];
-
-            // Skip unchecked rows
-            if (in_array($rowNumStr, $skip)) { $skipped++; continue; }
-
-            // Skip duplicate rows — alokasi already aggregated into first occurrence
-            if ($row['status'] === 'duplicate') { $skippedDup++; continue; }
-
-            $skId = $row['sub_kegiatan_id'];
-
-            // Auto-create sub_kegiatan for new_sk rows
-            if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
-                $newSk = SubKegiatan::firstOrCreate(
-                    ['kegiatan_id' => $row['kegiatan_id'], 'nama_sub_kegiatan' => $row['sub_kegiatan']],
-                    ['is_active' => true]
-                );
-                $skId = $newSk->id;
-                if ($newSk->wasRecentlyCreated) $createdSk++;
-            }
-
-            // not_found rows: auto force-create hierarchy from file columns
-            if ($row['status'] === 'not_found') {
-                $skId = $this->forceCreateSkFromRow($row, $user->id, $createdHier, $createdPd);
-                if (!$skId) { $skipped++; continue; }
-            }
-
-            if (!$skId) { $skipped++; continue; }
-
-            $processedSkIds[] = $skId;
-
-            $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
-                ->where('tahun', $cached['tahun'])->first();
-
-            $payload = [
-                'alokasi_anggaran'         => $row['alokasi_anggaran'],
-                'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
-                'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
-                'lokasi'                   => $row['lokasi'] ?: null,
-                'jumlah_sasaran'           => $row['jumlah_sasaran'] ?: null,
-                'besaran_manfaat'          => $row['besaran_manfaat'] ?: null,
-                'jenis_bantuan'            => $row['jenis_bantuan'] ?: null,
-                'durasi_pemberian'         => $row['durasi_pemberian'] ?: null,
-                'aktivitas_langsung'       => $row['aktivitas_langsung'] ?: null,
-                'aktivitas_tidak_langsung' => $row['aktivitas_tidak_langsung'] ?: null,
-                'aktivitas_penunjang'      => $row['aktivitas_penunjang'] ?: null,
-                'updated_by'               => $user->id,
-            ];
-
-            if ($exists) {
-                $exists->update($payload);
-                $updated++;
-            } else {
-                $payload['sub_kegiatan_id']  = $skId;
-                $payload['tahun']            = $cached['tahun'];
-                $payload['semester']         = 1;
-                $payload['realisasi_sem1']   = 0;
-                $payload['realisasi_sem2']   = 0;
-                $payload['realisasi_total']  = 0;
-                $payload['created_by']       = $user->id;
-                LaporanOppkpke::create($payload);
-                $imported++;
-            }
-        }
-
-        // Sinkronisasi Penuh: hapus record lama tahun ini yang tidak ada di file
-        $deleted = 0;
-        if ($request->boolean('replace_year') && !empty($processedSkIds)) {
-            $deleted = LaporanOppkpke::where('tahun', $cached['tahun'])
-                ->whereNotIn('sub_kegiatan_id', array_unique($processedSkIds))
-                ->delete();
-        }
-
-        cache()->forget($request->cache_key);
-
-        $skMsg   = $createdSk   > 0 ? ", {$createdSk} sub kegiatan baru" : '';
-        $hierMsg = $createdHier > 0 ? ", {$createdHier} entri hierarki baru" : '';
-        $pdMsg   = $createdPd   > 0 ? ", {$createdPd} perangkat daerah baru" : '';
-        $dupMsg  = $skippedDup  > 0 ? ", {$skippedDup} duplikat digabung" : '';
-        $delMsg  = $deleted     > 0 ? ", {$deleted} record lama dihapus (sinkronisasi penuh)" : '';
-        $msg     = "Import Matriks RAT selesai! {$updated} diperbarui, {$imported} baru{$skMsg}{$hierMsg}{$pdMsg}{$dupMsg}{$delMsg}, {$skipped} dilewati.";
-        return redirect()->route('oppkpke.import.rat')->with('success', $msg);
-    }
-
-    private function forceCreateSkFromRow(array $row, int $userId, int &$created, int &$createdPd = 0): ?int
-    {
-        $pdName   = trim($row['perangkat_daerah'] ?? '');
-        $progName = trim($row['program'] ?? '');
-        $kegName  = trim($row['kegiatan'] ?? '');
-        $skName   = trim($row['sub_kegiatan'] ?? '');
-
-        if (!$pdName || !$skName) return null;
-
-        // Find PerangkatDaerah by name (normalize for comparison)
-        $normalize = fn(string $s) => strtolower(preg_replace('/\s+/', ' ', trim($s)));
-        $pd = PerangkatDaerah::all()->first(fn($p) =>
-            $normalize($p->nama) === $normalize($pdName) ||
-            str_contains($normalize($p->nama), $normalize($pdName)) ||
-            str_contains($normalize($pdName), $normalize($p->nama))
-        );
-        // Auto-create PD from file if not found — ensures no row is ever silently dropped
-        if (!$pd) {
-            $pd = PerangkatDaerah::create([
-                'nama'      => $pdName,
-                'is_active' => true,
-            ]);
-            $createdPd++;
-        }
-
-        // Find or create Program under PD
-        $prog = null;
-        if ($progName) {
-            // Pass 1: fuzzy name match
-            $prog = Program::where('perangkat_daerah_id', $pd->id)->get()->first(fn($p) =>
-                $normalize($p->nama_program) === $normalize($progName) ||
-                str_contains($normalize($p->nama_program), $normalize($progName)) ||
-                str_contains($normalize($progName), $normalize($p->nama_program))
-            );
-            // Pass 2: kode match (catches cases where name differs but kode is unique)
-            if (!$prog && !empty($row['kode'])) {
-                $prog = Program::where('perangkat_daerah_id', $pd->id)
-                    ->where('kode_program', $row['kode'])
-                    ->first();
-            }
-            if (!$prog) {
-                $stratNorm = $normalize($row['strategi'] ?? '');
-                $strategi  = StrategiOppkpke::where('is_active', true)->get()->first(fn($s) =>
-                    str_contains($stratNorm, $normalize($s->kode)) ||
-                    str_contains($stratNorm, $normalize($s->nama))
-                ) ?? StrategiOppkpke::where('is_active', true)->orderBy('id')->first();
-
-                if ($strategi) {
-                    // firstOrCreate on unique constraint to avoid duplicate key errors
-                    $prog = Program::firstOrCreate(
-                        [
-                            'strategi_id'         => $strategi->id,
-                            'perangkat_daerah_id' => $pd->id,
-                            'kode_program'        => $row['kode'] ?? '',
-                        ],
-                        [
-                            'nama_program' => $progName,
-                            'is_active'    => true,
-                        ]
-                    );
-                }
-            }
-        }
-
-        // Fallback: use first program under this PD
-        if (!$prog) {
-            $prog = Program::where('perangkat_daerah_id', $pd->id)->first();
-        }
-        if (!$prog) return null;
-
-        // Find or create Kegiatan under Program
-        $keg = null;
-        if ($kegName) {
-            $keg = Kegiatan::where('program_id', $prog->id)->get()->first(fn($k) =>
-                $normalize($k->nama_kegiatan) === $normalize($kegName) ||
-                str_contains($normalize($k->nama_kegiatan), $normalize($kegName)) ||
-                str_contains($normalize($kegName), $normalize($k->nama_kegiatan))
-            );
-        }
-        if (!$keg) {
-            $keg = Kegiatan::firstOrCreate(
-                ['program_id' => $prog->id, 'nama_kegiatan' => $kegName ?: 'Kegiatan ' . $skName],
-                ['is_active' => true]
-            );
-        }
-
-        // Create SubKegiatan
-        $sk = SubKegiatan::firstOrCreate(
-            ['kegiatan_id' => $keg->id, 'nama_sub_kegiatan' => $skName],
-            ['is_active' => true]
+        ProcessLaporanRatImportJob::dispatch(
+            $cached,
+            $request->input('skip', []),
+            $request->boolean('replace_year'),
+            auth()->id(),
+            $statusKey
         );
 
-        if ($sk->wasRecentlyCreated) $created++;
-        return $sk->id;
+        return redirect()->route('oppkpke.import.rat')
+            ->with('info', 'Import Matriks RAT sedang diproses di background.')
+            ->with('import_status_key', $statusKey);
     }
 
     private function parseRatFile(string $filePath, string $ext): array

@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use App\Models\PerangkatDaerah;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 
@@ -366,37 +368,52 @@ class UserController extends Controller
             $prefix = strtolower(trim($item['email_prefix']));
             $email  = $prefix . '@oppkpke.go.id';
 
-            // Skip jika PD sudah punya operator
-            $alreadyHasOp = User::where('role', 'daerah')
-                ->where('perangkat_daerah_id', $pdId)
-                ->exists();
+            try {
+                DB::transaction(function () use ($pdId, $email, &$created, &$skipped, &$results) {
+                    // Kunci baris perangkat_daerah supaya dua request generateCredentials
+                    // yang nyaris bersamaan untuk PD yang sama saling menunggu di sini —
+                    // belum ada baris users untuk dikunci (itulah yang sedang dibuat),
+                    // jadi baris induk inilah yang dikunci. TIDAK menambah unique
+                    // constraint pada perangkat_daerah_id: UI memang sengaja mengizinkan
+                    // operator kedua untuk satu PD (cuma tampil peringatan, tidak diblokir).
+                    $pd = PerangkatDaerah::where('id', $pdId)->lockForUpdate()->firstOrFail();
 
-            if ($alreadyHasOp) {
-                $skipped++;
-                $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => 'Sudah ada operator'];
-                continue;
+                    $alreadyHasOp = User::where('role', 'daerah')
+                        ->where('perangkat_daerah_id', $pdId)
+                        ->exists();
+
+                    if ($alreadyHasOp) {
+                        $skipped++;
+                        $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => 'Sudah ada operator'];
+                        return;
+                    }
+
+                    if (User::where('email', $email)->exists()) {
+                        $skipped++;
+                        $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => "Email {$email} sudah digunakan"];
+                        return;
+                    }
+
+                    User::create([
+                        'name'                => $pd->nama,
+                        'email'               => $email,
+                        'password'            => Hash::make('password123'),
+                        'role'                => 'daerah',
+                        'perangkat_daerah_id' => $pdId,
+                        'is_active'           => true,
+                    ]);
+
+                    $created++;
+                    $results[] = ['pd_id' => $pdId, 'status' => 'created', 'email' => $email];
+                });
+            } catch (QueryException $e) {
+                if ($e->getCode() === '23000') {
+                    $skipped++;
+                    $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => 'Email sudah digunakan (bentrok saat penyimpanan)'];
+                    continue;
+                }
+                throw $e;
             }
-
-            // Skip jika email sudah digunakan
-            if (User::where('email', $email)->exists()) {
-                $skipped++;
-                $results[] = ['pd_id' => $pdId, 'status' => 'skipped', 'reason' => "Email {$email} sudah digunakan"];
-                continue;
-            }
-
-            $pd = PerangkatDaerah::find($pdId);
-
-            User::create([
-                'name'                => $pd->nama,
-                'email'               => $email,
-                'password'            => Hash::make('password123'),
-                'role'                => 'daerah',
-                'perangkat_daerah_id' => $pdId,
-                'is_active'           => true,
-            ]);
-
-            $created++;
-            $results[] = ['pd_id' => $pdId, 'status' => 'created', 'email' => $email];
         }
 
         $message = "Berhasil membuat <strong>{$created}</strong> akun baru";

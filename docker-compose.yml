@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: oppkpke_apps-app:latest
     container_name: oppkpke_app
     restart: unless-stopped
     working_dir: /var/www
@@ -25,6 +26,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # Queue worker — kode di-bake ke image yang sama dengan `app` (lihat `image:` di atas),
+  # tidak perlu build terpisah. Pakai driver 'database' (tabel `jobs` yang sudah ada),
+  # tidak perlu Redis untuk jumlah pengguna/job aplikasi ini. Proses tunggal
+  # di-supervisi oleh restart:unless-stopped (tidak ada supervisord di image ini)
+  # — --max-time bikin proses keluar bersih tiap jam supaya Docker me-restart-nya
+  # (membatasi memory growth PHP jangka panjang).
+  worker:
+    image: oppkpke_apps-app:latest
+    container_name: oppkpke_worker
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan queue:work database --queue=default --tries=3 --backoff=10,30,60 --max-time=3600 --sleep=3 --timeout=300
+    volumes:
+      - ./.env:/var/www/.env:ro
+      - storage_data:/var/www/storage
+      - cache_data:/var/www/bootstrap/cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - oppkpke_network
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
 
   nginx:
     image: nginx:alpine

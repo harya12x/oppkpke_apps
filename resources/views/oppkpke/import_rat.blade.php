@@ -17,6 +17,62 @@
 </div>
 @endif
 
+{{-- ── Import Diproses di Background (polling status) ──────────────────── --}}
+@if(session('import_status_key'))
+<div id="importStatusBanner" class="flex items-start gap-3 bg-blue-50 border border-blue-300 rounded-xl p-4 mb-5 shadow-sm">
+    <i class="fas fa-circle-notch fa-spin text-blue-500 text-xl mt-0.5 flex-shrink-0" id="importStatusIcon"></i>
+    <div>
+        <p class="font-semibold text-blue-800 text-sm" id="importStatusTitle">Sedang Diproses</p>
+        <p class="text-blue-700 text-sm mt-0.5" id="importStatusMessage">{{ session('info') }}</p>
+    </div>
+</div>
+<script>
+(function () {
+    var statusKey = @json(session('import_status_key'));
+    var statusUrl = @json(route('oppkpke.import.status'));
+    var poll = setInterval(function () {
+        fetch(statusUrl + '?key=' + encodeURIComponent(statusKey))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.state === 'processing' || data.state === 'unknown') return;
+
+                clearInterval(poll);
+                var banner = document.getElementById('importStatusBanner');
+                var icon   = document.getElementById('importStatusIcon');
+                var title  = document.getElementById('importStatusTitle');
+                var msg    = document.getElementById('importStatusMessage');
+
+                if (data.state === 'done') {
+                    banner.classList.remove('bg-blue-50', 'border-blue-300');
+                    banner.classList.add('bg-green-50', 'border-green-300');
+                    icon.classList.remove('fa-circle-notch', 'fa-spin', 'text-blue-500');
+                    icon.classList.add('fa-circle-check', 'text-green-500');
+                    title.className = 'font-semibold text-green-800 text-sm';
+                    title.textContent = 'Import Matriks RAT Selesai';
+                    msg.className = 'text-green-700 text-sm mt-0.5';
+                    msg.textContent = (data.updated || 0) + ' diperbarui, ' + (data.imported || 0) + ' baru'
+                        + ((data.created_sk || 0) > 0 ? ', ' + data.created_sk + ' sub kegiatan baru' : '')
+                        + ((data.created_hier || 0) > 0 ? ', ' + data.created_hier + ' entri hierarki baru' : '')
+                        + ((data.created_pd || 0) > 0 ? ', ' + data.created_pd + ' perangkat daerah baru' : '')
+                        + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
+                        + ', ' + (data.skipped || 0) + ' dilewati.';
+                } else {
+                    banner.classList.remove('bg-blue-50', 'border-blue-300');
+                    banner.classList.add('bg-red-50', 'border-red-300');
+                    icon.classList.remove('fa-circle-notch', 'fa-spin', 'text-blue-500');
+                    icon.classList.add('fa-triangle-exclamation', 'text-red-500');
+                    title.className = 'font-semibold text-red-800 text-sm';
+                    title.textContent = 'Import Gagal';
+                    msg.className = 'text-red-700 text-sm mt-0.5';
+                    msg.textContent = data.message || 'Terjadi kesalahan saat memproses import.';
+                }
+            })
+            .catch(function () { /* diam — coba lagi di tick berikutnya */ });
+    }, 3000);
+})();
+</script>
+@endif
+
 @if($errors->any())
 <div class="flex items-start gap-3 bg-red-50 border border-red-300 rounded-xl p-4 mb-5 shadow-sm">
     <i class="fas fa-triangle-exclamation text-red-500 text-xl mt-0.5 flex-shrink-0"></i>
