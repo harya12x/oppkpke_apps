@@ -142,15 +142,6 @@
                         Masuk
                     </button>
                 </form>
-
-                {{-- Info roles --}}
-                <div class="mt-6 p-3.5 bg-white/5 rounded-lg border border-white/10">
-                    <p class="text-xs text-slate-300 space-y-1 leading-relaxed">
-                        <span class="block"><i class="fas fa-user-shield mr-1.5 text-slate-400"></i><strong class="text-slate-200">Admin Master:</strong> akses penuh ke semua data & dashboard.</span>
-                        <span class="block mt-1"><i class="fas fa-user mr-1.5 text-slate-400"></i><strong class="text-slate-200">Operator Daerah:</strong> input laporan untuk perangkat daerah sendiri.</span>
-                    </p>
-                    <p class="text-xs text-slate-400 mt-2">Hubungi administrator jika lupa password.</p>
-                </div>
             </div>
 
             <p class="text-center text-slate-300 text-xs mt-4">
