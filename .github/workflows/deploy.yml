@@ -26,6 +26,13 @@ jobs:
             echo "========================================"
 
             # ----------------------------------------
+            # STEP 0: Izinkan git bekerja di direktori ini walau ownership
+            # tidak cocok dengan user SSH ("dubious ownership" — proteksi
+            # git sejak CVE-2022-24765). Idempotent, aman diulang tiap deploy.
+            # ----------------------------------------
+            git config --global --add safe.directory /var/www/oppkpke_apps
+
+            # ----------------------------------------
             # STEP 1: Sinkronkan kode (paksa sama dengan repo)
             # reset --hard mencegah deploy gagal gara-gara
             # perubahan lokal di server yang memblokir merge.
