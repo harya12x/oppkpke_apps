@@ -56,7 +56,7 @@
 
         {{-- Kiri: Logo + Judul --}}
         <div class="fade-up max-w-lg text-center lg:text-left" style="animation-delay:.05s">
-            <img src="{{ asset('logo_app.png') }}" alt="Logo OPPKPKE" class="w-24 h-auto mx-auto lg:mx-0 mb-5 drop-shadow-lg">
+            <img src="{{ asset('Logo_app_new.png') }}" alt="Logo OPPKPKE" class="w-36 sm:w-40 h-auto mx-auto lg:mx-0 mb-5 drop-shadow-lg">
             <h1 class="text-4xl sm:text-5xl font-extrabold leading-tight tracking-tight">
                 SISTEM INFORMASI<br>PENGENTASAN KEMISKINAN
             </h1>
