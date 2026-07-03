@@ -58,6 +58,22 @@ jobs:
             echo "🔨 Build image baru... (server lama tetap jalan selama build)"
             docker compose build app
 
+            # ----------------------------------------
+            # STEP 2b: Sinkronkan hasil build Vite (public/build) ke host.
+            # nginx menyajikan *.css/*.js sebagai file statis langsung dari bind-mount
+            # host (.:/var/www), BUKAN dari dalam container app. Tapi `npm run build`
+            # cuma jalan di dalam image saat docker build — hasilnya cuma ada di
+            # filesystem image, tidak pernah otomatis nyampe ke host. public/build juga
+            # di-.gitignore, jadi git pull tidak membantu. Tanpa langkah ini, nginx akan
+            # terus menyajikan public/build versi lama/basi (atau 404 kalau kosong) —
+            # inilah penyebab asset CSS/JS 404 & halaman jadi berantakan tanpa styling.
+            # ----------------------------------------
+            echo "📦 Sinkronkan asset build (Vite) dari image ke host untuk nginx..."
+            rm -rf public/build
+            CID=$(docker create oppkpke_apps-app:latest)
+            docker cp "$CID":/var/www/public/build ./public/build
+            docker rm "$CID" > /dev/null
+
             echo "🗄️  Jalankan migrasi (di container yang sedang jalan)..."
             docker compose exec -T app php artisan migrate --force
 
