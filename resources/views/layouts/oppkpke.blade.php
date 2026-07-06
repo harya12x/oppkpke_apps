@@ -75,6 +75,10 @@
                         <span class="inline-flex items-center gap-1 text-xs bg-yellow-400/20 text-yellow-300 px-2 py-0.5 rounded-full">
                             <i class="fas fa-shield-alt text-[10px]"></i> Admin Master
                         </span>
+                    @elseif(auth()->user()->isItTeam())
+                        <span class="inline-flex items-center gap-1 text-xs bg-purple-400/20 text-purple-200 px-2 py-0.5 rounded-full">
+                            <i class="fas fa-headset text-[10px]"></i> Tim IT
+                        </span>
                     @else
                         <span class="inline-flex items-center gap-1 text-xs bg-green-400/20 text-green-300 px-2 py-0.5 rounded-full">
                             <i class="fas fa-user text-[10px]"></i> Operator Daerah
@@ -91,6 +95,12 @@
 
         {{-- Navigation --}}
         <nav class="flex-1 mt-3 overflow-y-auto pb-2">
+
+            @php
+                $chatUnread = (auth()->user()->isDaerah() || auth()->user()->isItTeam())
+                    ? app(\App\Services\ChatService::class)->unreadConversationCount(auth()->user())
+                    : 0;
+            @endphp
 
             {{-- ── Menu untuk DAERAH (disederhanakan) ──────────── --}}
             @if(auth()->user()->isDaerah())
@@ -111,6 +121,37 @@
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.report') ? 'nav-active' : '' }}">
                 <i class="fas fa-table-list w-5 text-center flex-shrink-0 text-blue-300"></i>
                 <span class="text-sm font-medium">Rekap Laporan</span>
+            </a>
+
+            <a href="{{ route('oppkpke.chat.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-headset w-5 text-center flex-shrink-0 text-cyan-300"></i>
+                <span class="text-sm font-medium">Chat Support IT</span>
+                <span data-chat-unread class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 {{ $chatUnread ? '' : 'hidden' }}">{{ $chatUnread }}</span>
+            </a>
+
+            <div class="border-t border-blue-700 my-2 mx-5"></div>
+
+            <a href="{{ route('oppkpke.profile.change-password') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.profile.change-password') ? 'nav-active' : '' }}">
+                <i class="fas fa-key w-5 text-center flex-shrink-0 text-orange-300"></i>
+                <span class="text-sm font-medium">Ganti Password</span>
+            </a>
+
+            {{-- ── Menu untuk TIM IT (support inbox) ───────────── --}}
+            @elseif(auth()->user()->isItTeam())
+
+            <a href="{{ route('oppkpke.chat.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
+                <span class="text-sm font-medium">Inbox Support</span>
+                <span data-chat-unread class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 {{ $chatUnread ? '' : 'hidden' }}">{{ $chatUnread }}</span>
+            </a>
+
+            <a href="{{ route('oppkpke.announcements.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.announcements.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-bullhorn w-5 text-center flex-shrink-0 text-amber-300"></i>
+                <span class="text-sm font-medium">Pengumuman</span>
             </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
@@ -189,6 +230,21 @@
                         {{ $inactiveCount }}
                     </span>
                 @endif
+            </a>
+            <a href="{{ route('oppkpke.announcements.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.announcements.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-bullhorn w-5 text-center flex-shrink-0 text-amber-300"></i>
+                <span class="text-sm">Pengumuman</span>
+            </a>
+            <a href="{{ route('oppkpke.chat.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
+                <span class="text-sm">Pantau Chat</span>
+            </a>
+            <a href="{{ route('admin.audit.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.audit.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-clipboard-list w-5 text-center flex-shrink-0 text-pink-300"></i>
+                <span class="text-sm">Audit Log</span>
             </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
@@ -271,6 +327,9 @@
             <span>{{ session('error') }}</span>
         </div>
         @endif
+
+        {{-- Pengumuman / Maintenance (semua role kecuali Tim IT) --}}
+        @include('partials.announcement-banner')
 
         {{-- Page Content --}}
         <div class="flex-1 p-4 md:p-6">
@@ -504,6 +563,29 @@
         function gpBtnClass() {
             return 'w-full flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 transition text-left text-sm';
         }
+        // ── Sidebar chat unread badge — polling ringan ───────────────
+        (function () {
+            var badges = document.querySelectorAll('[data-chat-unread]');
+            if (!badges.length) return;
+            @if(auth()->check() && (auth()->user()->isDaerah() || auth()->user()->isItTeam()))
+            var url = "{{ route('oppkpke.chat.unread-count') }}";
+            function refreshUnread() {
+                if (document.hidden) return;   // hemat resource saat tab tidak aktif
+                fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (d) {
+                        if (!d) return;
+                        badges.forEach(function (b) {
+                            b.textContent = d.count;
+                            b.classList.toggle('hidden', !d.count);
+                        });
+                    })
+                    .catch(function () {});
+            }
+            setInterval(refreshUnread, 15000);
+            document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshUnread(); });
+            @endif
+        }());
     </script>
     @stack('scripts')
 </body>

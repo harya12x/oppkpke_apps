@@ -7,7 +7,7 @@
 @section('content')
 
 {{-- ── SUMMARY CARDS ──────────────────────────────────────── --}}
-<div class="grid grid-cols-3 md:grid-cols-5 gap-2 md:gap-4 mb-4 md:mb-6">
+<div class="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4 mb-4 md:mb-6">
     <div class="bg-white rounded-xl border shadow-sm p-3 md:p-4 text-center">
         <p class="text-xl md:text-2xl font-bold text-gray-800">{{ $summary['total'] }}</p>
         <p class="text-xs text-gray-500 mt-0.5">Total</p>
@@ -19,6 +19,10 @@
     <div class="bg-blue-50 rounded-xl border border-blue-200 shadow-sm p-3 md:p-4 text-center">
         <p class="text-xl md:text-2xl font-bold text-blue-700">{{ $summary['daerah'] }}</p>
         <p class="text-xs text-blue-600 mt-0.5">Operator</p>
+    </div>
+    <div class="bg-purple-50 rounded-xl border border-purple-200 shadow-sm p-3 md:p-4 text-center">
+        <p class="text-xl md:text-2xl font-bold text-purple-700">{{ $summary['it_team'] }}</p>
+        <p class="text-xs text-purple-600 mt-0.5">Tim IT</p>
     </div>
     <div class="bg-green-50 rounded-xl border border-green-200 shadow-sm p-3 md:p-4 text-center">
         <p class="text-xl md:text-2xl font-bold text-green-700">{{ $summary['active'] }}</p>
@@ -57,6 +61,7 @@
                 <span id="filterRoleBtnLabel" class="text-gray-700 flex-1 text-left">
                     @if(request('role') === 'master') Admin Master
                     @elseif(request('role') === 'daerah') Operator Daerah
+                    @elseif(request('role') === 'it_team') Tim IT
                     @else Semua Role
                     @endif
                 </span>
@@ -160,7 +165,7 @@
                     <td class="px-5 py-3.5">
                         <div class="flex items-center gap-3">
                             <div class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
-                                {{ $user->isMaster() ? 'bg-yellow-400 text-yellow-900' : 'bg-blue-100 text-blue-700' }}">
+                                {{ $user->isMaster() ? 'bg-yellow-400 text-yellow-900' : ($user->isItTeam() ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700') }}">
                                 {{ $user->initials }}
                             </div>
                             <div>
@@ -175,15 +180,7 @@
                         </div>
                     </td>
                     <td class="px-5 py-3.5">
-                        @if($user->isMaster())
-                            <span class="inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-xs font-semibold px-2.5 py-1 rounded-full">
-                                <i class="fas fa-shield-alt text-[10px]"></i> Admin Master
-                            </span>
-                        @else
-                            <span class="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-1 rounded-full">
-                                <i class="fas fa-user text-[10px]"></i> Operator Daerah
-                            </span>
-                        @endif
+                        @include('admin.users._role_badge', ['user' => $user])
                     </td>
                     <td class="px-5 py-3.5">
                         @if($user->perangkatDaerah)
@@ -227,7 +224,7 @@
         <div class="p-4 {{ !$user->is_active ? 'opacity-60' : '' }}" id="row-{{ $user->id }}">
             <div class="flex items-start gap-3">
                 <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
-                    {{ $user->isMaster() ? 'bg-yellow-400 text-yellow-900' : 'bg-blue-100 text-blue-700' }}">
+                    {{ $user->isMaster() ? 'bg-yellow-400 text-yellow-900' : ($user->isItTeam() ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700') }}">
                     {{ $user->initials }}
                 </div>
                 <div class="flex-1 min-w-0">
@@ -246,15 +243,7 @@
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 mt-2">
-                        @if($user->isMaster())
-                            <span class="inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-xs font-semibold px-2 py-0.5 rounded-full">
-                                <i class="fas fa-shield-alt text-[9px]"></i> Admin Master
-                            </span>
-                        @else
-                            <span class="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-xs font-semibold px-2 py-0.5 rounded-full">
-                                <i class="fas fa-user text-[9px]"></i> Operator Daerah
-                            </span>
-                        @endif
+                        @include('admin.users._role_badge', ['user' => $user, 'sm' => true])
                         @include('admin.users._toggle', ['user' => $user])
                     </div>
                     @if($user->perangkatDaerah)
@@ -620,6 +609,18 @@
                 </div>
                 <i class="fas fa-check text-blue-500 ml-auto hidden" id="roleCheckDaerah"></i>
             </button>
+            <button type="button" onclick="selectPickerRole('it_team','Tim IT')"
+                    class="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-gray-200 hover:border-purple-400 hover:bg-purple-50 transition text-left group"
+                    data-value="it_team">
+                <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:bg-purple-200">
+                    <i class="fas fa-headset text-purple-600"></i>
+                </div>
+                <div>
+                    <p class="font-semibold text-gray-800">Tim IT</p>
+                    <p class="text-xs text-gray-500">Menangani chat support & pengumuman maintenance</p>
+                </div>
+                <i class="fas fa-check text-purple-500 ml-auto hidden" id="roleCheckItTeam"></i>
+            </button>
             <button type="button" onclick="selectPickerRole('master','Admin Master')"
                     class="w-full flex items-center gap-3 p-3.5 rounded-xl border-2 border-gray-200 hover:border-yellow-400 hover:bg-yellow-50 transition text-left group"
                     data-value="master">
@@ -852,6 +853,7 @@ function closePicker(type) {
 
 function updateRoleHighlight(val) {
     document.getElementById('roleCheckDaerah').classList.toggle('hidden', val !== 'daerah');
+    document.getElementById('roleCheckItTeam').classList.toggle('hidden', val !== 'it_team');
     document.getElementById('roleCheckMaster').classList.toggle('hidden', val !== 'master');
 }
 
@@ -874,6 +876,14 @@ function selectPickerRole(value, label) {
             descEl.textContent= 'Input laporan untuk perangkat daerah sendiri';
             descEl.className  = 'text-xs text-gray-500';
             descEl.classList.remove('hidden');
+        } else if (value === 'it_team') {
+            iconEl.className  = 'w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0';
+            iconEl.innerHTML  = '<i class="fas fa-headset text-purple-600"></i>';
+            lblEl.textContent = 'Tim IT';
+            lblEl.className   = 'text-sm font-medium text-gray-800';
+            descEl.textContent= 'Menangani chat support & pengumuman maintenance';
+            descEl.className  = 'text-xs text-gray-500';
+            descEl.classList.remove('hidden');
         } else if (value === 'master') {
             iconEl.className  = 'w-8 h-8 rounded-lg bg-yellow-100 flex items-center justify-center flex-shrink-0';
             iconEl.innerHTML  = '<i class="fas fa-shield-alt text-yellow-600"></i>';
@@ -889,10 +899,11 @@ function selectPickerRole(value, label) {
 }
 
 function handleRoleChange() {
-    var role = document.getElementById('fieldRole').value;
-    var wPd  = document.getElementById('wrapPd');
-    wPd.style.display = (role === 'master') ? 'none' : 'block';
-    if (role === 'master') {
+    var role       = document.getElementById('fieldRole').value;
+    var wPd        = document.getElementById('wrapPd');
+    var noPdRole   = (role === 'master' || role === 'it_team');
+    wPd.style.display = noPdRole ? 'none' : 'block';
+    if (noPdRole) {
         document.getElementById('fieldPd').value = '';
         resetPdBtn();
         document.getElementById('pdWarning').classList.add('hidden');
@@ -1055,6 +1066,14 @@ function setRoleBtnDisplay(value) {
         lblEl.textContent = 'Operator Daerah';
         lblEl.className   = 'text-sm font-medium text-gray-800';
         descEl.textContent= 'Input laporan untuk perangkat daerah sendiri';
+        descEl.className  = 'text-xs text-gray-500';
+        descEl.classList.remove('hidden');
+    } else if (value === 'it_team') {
+        iconEl.className  = 'w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0';
+        iconEl.innerHTML  = '<i class="fas fa-headset text-purple-600"></i>';
+        lblEl.textContent = 'Tim IT';
+        lblEl.className   = 'text-sm font-medium text-gray-800';
+        descEl.textContent= 'Menangani chat support & pengumuman maintenance';
         descEl.className  = 'text-xs text-gray-500';
         descEl.classList.remove('hidden');
     } else if (value === 'master') {

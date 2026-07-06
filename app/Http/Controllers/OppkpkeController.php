@@ -33,8 +33,13 @@ class OppkpkeController extends Controller
 
     public function index()
     {
-        if (auth()->user()->isMaster()) {
+        $user = auth()->user();
+
+        if ($user->isMaster()) {
             return redirect()->route('oppkpke.matrix');
+        }
+        if ($user->isItTeam()) {
+            return redirect()->route('oppkpke.chat.index');
         }
         return redirect()->route('oppkpke.dashboard');
     }

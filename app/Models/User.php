@@ -59,6 +59,20 @@ class User extends Authenticatable
         return $this->role === 'daerah';
     }
 
+    public function isItTeam(): bool
+    {
+        return $this->role === 'it_team';
+    }
+
+    /**
+     * Boleh melihat banner pengumuman? Semua role KECUALI Tim IT
+     * (Tim IT yang menerbitkan, jadi tidak perlu melihat banner-nya sendiri).
+     */
+    public function canSeeAnnouncements(): bool
+    {
+        return !$this->isItTeam();
+    }
+
     public function isActive(): bool
     {
         return (bool) $this->is_active;
@@ -71,9 +85,10 @@ class User extends Authenticatable
     public function getRoleLabelAttribute(): string
     {
         return match($this->role) {
-            'master' => 'Admin Master',
-            'daerah' => 'Operator Daerah',
-            default  => ucfirst($this->role),
+            'master'  => 'Admin Master',
+            'daerah'  => 'Operator Daerah',
+            'it_team' => 'Tim IT',
+            default   => ucfirst($this->role),
         };
     }
 

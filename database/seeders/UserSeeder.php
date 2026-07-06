@@ -80,15 +80,30 @@ class UserSeeder extends Seeder
             ]
         );
 
+        // Tim IT — menangani chat support & pengumuman maintenance
+        DB::table('users')->updateOrInsert(
+            ['email' => 'it@oppkpke.go.id'],
+            [
+                'name'                => 'Tim IT OPPKPKE',
+                'email'               => 'it@oppkpke.go.id',
+                'password'            => Hash::make('password123'),
+                'role'                => 'it_team',
+                'perangkat_daerah_id' => null,
+                'created_at'          => now(),
+                'updated_at'          => now(),
+            ]
+        );
+
         $this->command->info('✅ Users seeded successfully.');
         $this->command->table(
             ['Email', 'Role', 'Password'],
             [
-                ['admin@oppkpke.go.id',  'master', 'password123'],
-                ['dikbud@oppkpke.go.id', 'daerah', 'password123'],
-                ['dinkes@oppkpke.go.id', 'daerah', 'password123'],
-                ['bpbd@oppkpke.go.id',   'daerah', 'password123'],
-                ['dinsos@oppkpke.go.id', 'daerah', 'password123'],
+                ['admin@oppkpke.go.id',  'master',  'password123'],
+                ['dikbud@oppkpke.go.id', 'daerah',  'password123'],
+                ['dinkes@oppkpke.go.id', 'daerah',  'password123'],
+                ['bpbd@oppkpke.go.id',   'daerah',  'password123'],
+                ['dinsos@oppkpke.go.id', 'daerah',  'password123'],
+                ['it@oppkpke.go.id',     'it_team', 'password123'],
             ]
         );
     }

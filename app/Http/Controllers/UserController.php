@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\User;
 use App\Models\PerangkatDaerah;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -48,6 +49,7 @@ class UserController extends Controller
             'total'    => User::count(),
             'master'   => User::where('role', 'master')->count(),
             'daerah'   => User::where('role', 'daerah')->count(),
+            'it_team'  => User::where('role', 'it_team')->count(),
             'active'   => User::where('is_active', true)->count(),
             'inactive' => User::where('is_active', false)->count(),
         ];
@@ -143,7 +145,7 @@ class UserController extends Controller
             'name'                => 'required|string|max:100',
             'email'               => 'required|email|unique:users,email',
             'password'            => ['required', Password::min(8)->letters()->numbers()],
-            'role'                => 'required|in:master,daerah',
+            'role'                => 'required|in:master,daerah,it_team',
             'perangkat_daerah_id' => 'nullable|exists:perangkat_daerah,id',
             'is_active'           => 'boolean',
         ], [
@@ -163,8 +165,8 @@ class UserController extends Controller
             ], 422);
         }
 
-        // Master tidak perlu perangkat daerah
-        if ($validated['role'] === 'master') {
+        // Master & Tim IT tidak terikat perangkat daerah
+        if (in_array($validated['role'], ['master', 'it_team'], true)) {
             $validated['perangkat_daerah_id'] = null;
         }
 
@@ -172,6 +174,8 @@ class UserController extends Controller
         $validated['password']  = Hash::make($validated['password']);
 
         $user = User::create($validated);
+
+        AuditLog::record('user.created', "Membuat akun {$user->email} (role: {$user->role})", $user);
 
         return response()->json([
             'success' => true,
@@ -210,7 +214,7 @@ class UserController extends Controller
         $validated = $request->validate([
             'name'                => 'required|string|max:100',
             'email'               => "required|email|unique:users,email,{$user->id}",
-            'role'                => 'required|in:master,daerah',
+            'role'                => 'required|in:master,daerah,it_team',
             'perangkat_daerah_id' => 'nullable|exists:perangkat_daerah,id',
             'is_active'           => 'boolean',
         ], [
@@ -236,13 +240,15 @@ class UserController extends Controller
             ], 422);
         }
 
-        if ($validated['role'] === 'master') {
+        if (in_array($validated['role'], ['master', 'it_team'], true)) {
             $validated['perangkat_daerah_id'] = null;
         }
 
         $validated['is_active'] = $request->boolean('is_active', true);
 
         $user->update($validated);
+
+        AuditLog::record('user.updated', "Memperbarui akun {$user->email}", $user, ['changes' => array_keys($user->getChanges())]);
 
         return response()->json([
             'success' => true,
@@ -266,6 +272,9 @@ class UserController extends Controller
         $user->update(['is_active' => !$user->is_active]);
 
         $status  = $user->is_active ? 'diaktifkan' : 'dinonaktifkan';
+
+        AuditLog::record('user.toggled', "Akun {$user->email} {$status}", $user, ['is_active' => $user->is_active]);
+
         $message = "Akun <strong>{$user->name}</strong> berhasil {$status}.";
 
         return response()->json([
@@ -289,6 +298,8 @@ class UserController extends Controller
         ]);
 
         $user->update(['password' => Hash::make($validated['new_password'])]);
+
+        AuditLog::record('user.password_reset', "Reset password akun {$user->email}", $user);
 
         return response()->json([
             'success' => true,
@@ -485,7 +496,9 @@ class UserController extends Controller
             ], 422);
         }
 
-        $name = $user->name;
+        $name  = $user->name;
+        $email = $user->email;
+        AuditLog::record('user.deleted', "Menghapus akun {$email}", $user, ['name' => $name, 'email' => $email, 'role' => $user->role]);
         $user->delete();
 
         return response()->json([

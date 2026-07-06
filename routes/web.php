@@ -1,7 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\OppkpkeController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserController;
@@ -106,6 +108,36 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     Route::get('/panduan', [OppkpkeController::class, 'panduan'])->name('panduan');
 
     // --------------------------------------------------
+    // CHAT SUPPORT — Operator Daerah ⇄ Tim IT
+    // --------------------------------------------------
+    Route::prefix('chat')->name('chat.')->middleware('role:daerah,it_team,master')->group(function () {
+        Route::get('/',                          [ChatController::class, 'index'])->name('index');
+        // Endpoint polling — batas longgar (dipanggil berkala oleh klien).
+        Route::get('/unread-count',              [ChatController::class, 'unreadCount'])->middleware('throttle:120,1')->name('unread-count');
+        // Anti-spam pembuatan tiket & pengiriman pesan (SEC1).
+        Route::post('/',                         [ChatController::class, 'store'])->middleware('throttle:20,1')->name('store');
+        Route::get('/{conversation}',            [ChatController::class, 'show'])->name('show');
+        Route::get('/{conversation}/poll',       [ChatController::class, 'poll'])->middleware('throttle:120,1')->name('poll');
+        Route::get('/{conversation}/history',    [ChatController::class, 'history'])->middleware('throttle:60,1')->name('history');
+        Route::post('/{conversation}/messages',  [ChatController::class, 'storeMessage'])->middleware('throttle:60,1')->name('message');
+        Route::get('/{conversation}/attachment/{message}', [ChatController::class, 'attachment'])->name('attachment');
+        Route::patch('/{conversation}/messages/{message}', [ChatController::class, 'editMessage'])->middleware('throttle:60,1')->name('message.edit');
+        Route::delete('/{conversation}/messages/{message}',[ChatController::class, 'deleteMessage'])->middleware('throttle:60,1')->name('message.delete');
+        Route::patch('/{conversation}/status',   [ChatController::class, 'updateStatus'])->name('status');
+    });
+
+    // --------------------------------------------------
+    // PENGUMUMAN / MAINTENANCE — dikelola Admin Master & Tim IT
+    // --------------------------------------------------
+    Route::prefix('pengumuman')->name('announcements.')->middleware('role:master,it_team')->group(function () {
+        Route::get('/',                       [AnnouncementController::class, 'index'])->name('index');
+        Route::post('/',                      [AnnouncementController::class, 'store'])->middleware('throttle:30,1')->name('store');
+        Route::put('/{announcement}',         [AnnouncementController::class, 'update'])->middleware('throttle:30,1')->name('update');
+        Route::patch('/{announcement}/toggle',[AnnouncementController::class, 'toggle'])->name('toggle');
+        Route::delete('/{announcement}',      [AnnouncementController::class, 'destroy'])->name('destroy');
+    });
+
+    // --------------------------------------------------
     // PROFIL — ganti password sendiri
     // --------------------------------------------------
     Route::get('/ganti-password',  [ProfileController::class, 'changePasswordForm'])->name('profile.change-password');
@@ -115,6 +147,14 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
 // =====================================================
 // USER MANAGEMENT (master only)
 // =====================================================
+
+// =====================================================
+// AUDIT LOG (master only)
+// =====================================================
+
+Route::prefix('admin/audit')->name('admin.audit.')->middleware(['auth', 'role:master'])->group(function () {
+    Route::get('/', [\App\Http\Controllers\AuditLogController::class, 'index'])->name('index');
+});
 
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {
     Route::get('/',                                    [UserController::class, 'index'])->name('index');

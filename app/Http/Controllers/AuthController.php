@@ -58,17 +58,28 @@ class AuthController extends Controller
             RateLimiter::clear($throttleKey);
 
             $user->update(['last_login_at' => now()]);
+            \App\Models\AuditLog::record('auth.login', "Login berhasil ({$user->email})", $user);
             $request->session()->regenerate();   // OWASP A07: session fixation prevention
 
-            $redirect = $user->isMaster()
-                ? route('oppkpke.matrix')
-                : route('oppkpke.dashboard');
+            $redirect = match (true) {
+                $user->isMaster()  => route('oppkpke.matrix'),
+                $user->isItTeam()  => route('oppkpke.chat.index'),
+                default            => route('oppkpke.dashboard'),
+            };
 
             return redirect()->intended($redirect);
         }
 
         // Increment throttle counter on failed attempt
         RateLimiter::hit($throttleKey, 60);
+
+        // SEC4: catat percobaan login gagal (deteksi brute-force).
+        \App\Models\AuditLog::record(
+            'auth.login_failed',
+            'Percobaan login gagal untuk ' . $request->input('email'),
+            null,
+            ['email' => $request->input('email')],
+        );
 
         return back()
             ->withInput($request->only('email'))
@@ -77,6 +88,7 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
+        \App\Models\AuditLog::record('auth.logout', 'Logout', Auth::user());
         Auth::logout();
         $request->session()->invalidate();        // OWASP A07: regenerate CSRF token after logout
         $request->session()->regenerateToken();
