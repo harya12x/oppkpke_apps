@@ -51,6 +51,29 @@ services:
       - APP_ENV=production
       - APP_DEBUG=false
 
+  # Scheduler — menjalankan penjadwal Laravel (schedule:work) di foreground.
+  # Menangani: announcements:deactivate-expired (tiap 10 mnt), audit:prune (harian),
+  # queue:prune-failed (mingguan). Image sama dengan `app`, tidak perlu build ulang.
+  # HANYA SATU instance (penjadwal tidak boleh digandakan). restart:unless-stopped
+  # yang menjaganya tetap hidup — tidak butuh supervisord/cron di host.
+  scheduler:
+    image: oppkpke_apps-app:latest
+    container_name: oppkpke_scheduler
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan schedule:work
+    volumes:
+      - ./.env:/var/www/.env:ro
+      - storage_data:/var/www/storage
+      - cache_data:/var/www/bootstrap/cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - oppkpke_network
+    environment:
+      - APP_ENV=production
+      - APP_DEBUG=false
+
   nginx:
     image: nginx:alpine
     container_name: oppkpke_nginx
