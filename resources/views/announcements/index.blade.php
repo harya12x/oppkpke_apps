@@ -102,7 +102,14 @@
                     </div>
                     <div class="flex items-center gap-1 flex-shrink-0">
                         <button type="button" title="Edit"
-                                onclick='openEditAnn(@json(["id" => $ann->id, "title" => $ann->title, "body" => $ann->body, "type" => $ann->type, "is_active" => $ann->is_active, "starts_at" => optional($ann->starts_at)->format("Y-m-d\TH:i"), "ends_at" => optional($ann->ends_at)->format("Y-m-d\TH:i")]))'
+                                data-id="{{ $ann->id }}"
+                                data-title="{{ $ann->title }}"
+                                data-body="{{ $ann->body }}"
+                                data-type="{{ $ann->type }}"
+                                data-active="{{ $ann->is_active ? 1 : 0 }}"
+                                data-starts="{{ optional($ann->starts_at)->format('Y-m-d\TH:i') }}"
+                                data-ends="{{ optional($ann->ends_at)->format('Y-m-d\TH:i') }}"
+                                onclick="openEditAnnBtn(this)"
                                 class="w-8 h-8 rounded-lg text-blue-600 hover:bg-blue-50 transition"><i class="fas fa-pen text-xs"></i></button>
                         <form method="POST" action="{{ route('oppkpke.announcements.toggle', $ann) }}">
                             @csrf @method('PATCH')
@@ -181,6 +188,17 @@
 <script>
     var editForm = document.getElementById('editAnnForm');
     var baseUrl  = "{{ url('oppkpke/pengumuman') }}";
+    function openEditAnnBtn(btn) {
+        openEditAnn({
+            id:        btn.dataset.id,
+            title:     btn.dataset.title,
+            body:      btn.dataset.body,
+            type:      btn.dataset.type,
+            is_active: btn.dataset.active === '1',
+            starts_at: btn.dataset.starts,
+            ends_at:   btn.dataset.ends,
+        });
+    }
     function openEditAnn(a) {
         editForm.action = baseUrl + '/' + a.id;
         document.getElementById('ea_title').value  = a.title || '';
