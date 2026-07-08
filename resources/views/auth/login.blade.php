@@ -64,7 +64,7 @@
         <div class="fade-up max-w-lg text-center lg:text-left" style="animation-delay:.05s">
             <img src="{{ asset('Logo_app_new.png') }}" alt="Logo OPPKPKE" class="w-24 sm:w-32 lg:w-40 h-auto mx-auto lg:mx-0 mb-4 sm:mb-5 drop-shadow-lg">
             <h1 class="text-2xl sm:text-4xl lg:text-5xl font-extrabold leading-tight tracking-tight">
-                Pusat Analisis, Sinkronisasi Data<br>Tata Kelola Intervensi
+                Pusat Analisis, Sinkronisasi Data dan<br>Tata Kelola Intervensi
             </h1>
             <p class="text-slate-200 text-base sm:text-lg lg:text-xl mt-2 sm:mt-3 font-medium">Kabupaten Kotabaru</p>
         </div>
