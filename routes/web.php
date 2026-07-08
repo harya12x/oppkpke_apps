@@ -48,14 +48,23 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     Route::get('/explorer/data', [OppkpkeController::class, 'explorerData'])->name('explorer.data');
 
     // --------------------------------------------------
-    // INPUT LAPORAN - semua role (difilter by role di controller)
+    // IDENTITAS PIC — wajib dilengkapi Operator Daerah sebelum input laporan
     // --------------------------------------------------
-    Route::get('/laporan', [OppkpkeController::class, 'laporan'])->name('laporan.index');
-    Route::post('/laporan', [OppkpkeController::class, 'store'])->name('laporan.store');
-    Route::put('/laporan/{id}', [OppkpkeController::class, 'update'])->name('laporan.update');
-    // batch HARUS terdaftar sebelum {id} — kalau tidak, "batch" akan tertangkap sebagai {id}.
-    Route::delete('/laporan/batch', [OppkpkeController::class, 'batchDestroy'])->name('laporan.batch-destroy');
-    Route::delete('/laporan/{id}', [OppkpkeController::class, 'destroy'])->name('laporan.destroy');
+    Route::get('/lengkapi-identitas',  [ProfileController::class, 'picForm'])->name('pic.form');
+    Route::post('/lengkapi-identitas', [ProfileController::class, 'picSave'])->name('pic.save');
+
+    // --------------------------------------------------
+    // INPUT LAPORAN - semua role (difilter by role di controller)
+    // Gate 'pic.identity': Operator Daerah wajib lengkapi identitas PIC dulu.
+    // --------------------------------------------------
+    Route::middleware('pic.identity')->group(function () {
+        Route::get('/laporan', [OppkpkeController::class, 'laporan'])->name('laporan.index');
+        Route::post('/laporan', [OppkpkeController::class, 'store'])->name('laporan.store');
+        Route::put('/laporan/{id}', [OppkpkeController::class, 'update'])->name('laporan.update');
+        // batch HARUS terdaftar sebelum {id} — kalau tidak, "batch" akan tertangkap sebagai {id}.
+        Route::delete('/laporan/batch', [OppkpkeController::class, 'batchDestroy'])->name('laporan.batch-destroy');
+        Route::delete('/laporan/{id}', [OppkpkeController::class, 'destroy'])->name('laporan.destroy');
+    });
 
     // --------------------------------------------------
     // OPTIONS - CASCADING DROPDOWN (AJAX)
@@ -149,10 +158,11 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
 // =====================================================
 
 // =====================================================
-// AUDIT LOG (master only)
+// AUDIT LOG — dikelola/dipantau oleh Tim IT (menu ada di Tim IT).
+// Master tetap dapat mengakses via URL (super-admin), tapi menu dipindah ke Tim IT.
 // =====================================================
 
-Route::prefix('admin/audit')->name('admin.audit.')->middleware(['auth', 'role:master'])->group(function () {
+Route::prefix('admin/audit')->name('admin.audit.')->middleware(['auth', 'role:it_team,master'])->group(function () {
     Route::get('/', [\App\Http\Controllers\AuditLogController::class, 'index'])->name('index');
 });
 

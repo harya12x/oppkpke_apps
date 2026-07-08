@@ -9,6 +9,7 @@ use App\Models\Program;
 use App\Models\Kegiatan;
 use App\Models\SubKegiatan;
 use App\Models\LaporanOppkpke;
+use App\Models\AuditLog;
 use App\Services\OppkpkeService;
 use App\Http\Requests\LaporanOppkpkeRequest;
 use App\Jobs\ProcessLaporanImportJob;
@@ -230,6 +231,20 @@ class OppkpkeController extends Controller
                 (int) $validated['sub_kegiatan_id'],
                 (int) $validated['tahun'],
                 $validated
+            );
+
+            // Audit terlacak ke PIC (nama + NIK tersamar) — dipantau Tim IT.
+            AuditLog::record(
+                $id ? 'laporan.updated' : 'laporan.created',
+                ($id ? 'Memperbarui' : 'Menginput') . " laporan sub-kegiatan #{$validated['sub_kegiatan_id']} TA {$validated['tahun']}",
+                null,
+                [
+                    'pic_nama'            => $user->nama_lengkap,
+                    'pic_nik'             => $user->no_ktp ? substr($user->no_ktp, 0, 4) . '********' . substr($user->no_ktp, -4) : null,
+                    'perangkat_daerah_id' => $user->perangkat_daerah_id,
+                    'sub_kegiatan_id'     => (int) $validated['sub_kegiatan_id'],
+                    'tahun'               => (int) $validated['tahun'],
+                ],
             );
 
             return response()->json([

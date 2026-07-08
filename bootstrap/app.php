@@ -13,7 +13,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'role' => \App\Http\Middleware\CheckRole::class,
+            'role'         => \App\Http\Middleware\CheckRole::class,
+            'pic.identity' => \App\Http\Middleware\EnsurePicIdentity::class,
         ]);
 
         // OWASP A05 / MITRE T1190: security headers on every web response

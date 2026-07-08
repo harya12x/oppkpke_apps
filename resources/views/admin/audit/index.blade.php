@@ -14,6 +14,9 @@
         'announcement.toggled' => 'bg-amber-100 text-amber-700', 'announcement.deleted' => 'bg-red-100 text-red-700',
         'announcement.auto_expired' => 'bg-gray-100 text-gray-600',
         'chat.status_changed' => 'bg-cyan-100 text-cyan-700',
+        'laporan.created' => 'bg-green-100 text-green-700', 'laporan.updated' => 'bg-blue-100 text-blue-700',
+        'laporan.deleted' => 'bg-red-100 text-red-700',
+        'pic.completed' => 'bg-indigo-100 text-indigo-700', 'pic.updated' => 'bg-indigo-100 text-indigo-700',
         'auth.login' => 'bg-emerald-100 text-emerald-700', 'auth.logout' => 'bg-gray-100 text-gray-600',
         'auth.login_failed' => 'bg-red-100 text-red-700',
     ];

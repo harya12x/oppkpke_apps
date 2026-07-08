@@ -22,6 +22,97 @@
         </div>
     </div>
 
+    {{-- ═══════════════════════════════════════════════════════════
+         PANDUAN INPUT LAPORAN — lengkap & detail (semua role)
+    ═══════════════════════════════════════════════════════════ --}}
+    <div class="bg-white rounded-xl shadow-sm border-2 border-green-200 p-4 md:p-6" id="panduan-input-laporan">
+        <h3 class="text-base md:text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+            <i class="fas fa-file-pen text-green-600"></i> Panduan Lengkap Input Laporan
+        </h3>
+        <p class="text-xs md:text-sm text-gray-500 mb-4">Ikuti langkah berikut untuk menginput/memperbarui laporan realisasi anggaran dengan benar.</p>
+
+        {{-- Prasyarat --}}
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 md:p-4 mb-4">
+            <p class="text-sm font-semibold text-amber-800 mb-1"><i class="fas fa-triangle-exclamation mr-1"></i> Prasyarat (Operator Daerah)</p>
+            <p class="text-sm text-amber-700">Lengkapi <strong>Identitas PIC</strong> (Nama Lengkap &amp; No KTP/NIK) melalui menu
+                <em>Identitas PIC</em> sebelum menginput. Setiap laporan tercatat atas nama PIC untuk penelusuran audit.</p>
+        </div>
+
+        {{-- Langkah-langkah --}}
+        <ol class="space-y-3">
+            @php
+                $steps = [
+                    ['Buka menu Input Data', 'Klik <strong>Input Data</strong> (Operator Daerah) atau <strong>Input Laporan</strong> (Admin) di menu samping.'],
+                    ['Pilih Tahun Anggaran', 'Pastikan <strong>Tahun</strong> di pojok kanan atas sudah benar. Data terikat pada tahun yang dipilih.'],
+                    ['Pilih Sub Kegiatan', 'Gunakan dropdown bertingkat: Strategi → Program → Kegiatan → Sub Kegiatan. Operator Daerah hanya melihat sub kegiatan milik perangkat daerahnya.'],
+                    ['Isi Pagu / Alokasi Anggaran', 'Masukkan <strong>Alokasi Anggaran</strong> (pagu) dalam Rupiah tanpa titik/koma — sistem memformat otomatis.'],
+                    ['Isi Realisasi per Semester', 'Isi <strong>Realisasi Semester 1</strong> dan <strong>Semester 2</strong>. Total realisasi dihitung otomatis dan tidak boleh melebihi alokasi.'],
+                    ['Isi Capaian & Keterangan', 'Lengkapi indikator capaian, satuan, dan keterangan/aktivitas bila tersedia agar laporan informatif.'],
+                    ['Periksa & Simpan', 'Tinjau ulang angka, lalu klik <strong>Simpan</strong>. Notifikasi hijau menandakan data tersimpan.'],
+                    ['Verifikasi di Rekap', 'Buka <strong>Rekap Laporan</strong> untuk memastikan data muncul dan angkanya benar.'],
+                ];
+            @endphp
+            @foreach($steps as $i => $s)
+                <li class="flex gap-3">
+                    <span class="flex-shrink-0 w-7 h-7 rounded-full bg-green-600 text-white text-sm font-bold flex items-center justify-center">{{ $i + 1 }}</span>
+                    <div>
+                        <p class="text-sm font-semibold text-gray-800">{{ $s[0] }}</p>
+                        <p class="text-sm text-gray-600">{!! $s[1] !!}</p>
+                    </div>
+                </li>
+            @endforeach
+        </ol>
+
+        {{-- Penjelasan kolom penting --}}
+        <div class="mt-5">
+            <p class="text-sm font-semibold text-gray-800 mb-2"><i class="fas fa-list-check text-green-600 mr-1"></i> Penjelasan Kolom Penting</p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border">
+                    <thead class="bg-gray-50 text-gray-600 text-xs">
+                        <tr>
+                            <th class="text-left px-3 py-2 border-b">Kolom</th>
+                            <th class="text-left px-3 py-2 border-b">Arti</th>
+                            <th class="text-left px-3 py-2 border-b">Contoh</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y">
+                        <tr><td class="px-3 py-2 font-medium">Alokasi Anggaran</td><td class="px-3 py-2 text-gray-600">Pagu yang dianggarkan untuk sub kegiatan pada tahun berjalan.</td><td class="px-3 py-2 text-gray-500">150.000.000</td></tr>
+                        <tr><td class="px-3 py-2 font-medium">Realisasi Sem 1</td><td class="px-3 py-2 text-gray-600">Anggaran terpakai Januari–Juni.</td><td class="px-3 py-2 text-gray-500">60.000.000</td></tr>
+                        <tr><td class="px-3 py-2 font-medium">Realisasi Sem 2</td><td class="px-3 py-2 text-gray-600">Anggaran terpakai Juli–Desember.</td><td class="px-3 py-2 text-gray-500">75.000.000</td></tr>
+                        <tr><td class="px-3 py-2 font-medium">Realisasi Total</td><td class="px-3 py-2 text-gray-600">Otomatis = Sem 1 + Sem 2 (≤ Alokasi).</td><td class="px-3 py-2 text-gray-500">135.000.000</td></tr>
+                        <tr><td class="px-3 py-2 font-medium">% Realisasi</td><td class="px-3 py-2 text-gray-600">Otomatis = Realisasi Total ÷ Alokasi × 100.</td><td class="px-3 py-2 text-gray-500">90%</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {{-- Do & Don't --}}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+            <div class="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p class="text-sm font-semibold text-green-800 mb-1"><i class="fas fa-check-circle mr-1"></i> Sebaiknya</p>
+                <ul class="text-sm text-green-700 space-y-1 list-disc list-inside">
+                    <li>Simpan berkala saat mengisi banyak data.</li>
+                    <li>Pastikan tahun anggaran benar sebelum menyimpan.</li>
+                    <li>Cek total realisasi tidak melebihi pagu.</li>
+                </ul>
+            </div>
+            <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p class="text-sm font-semibold text-red-800 mb-1"><i class="fas fa-ban mr-1"></i> Hindari</p>
+                <ul class="text-sm text-red-700 space-y-1 list-disc list-inside">
+                    <li>Mengisi angka dengan huruf/simbol.</li>
+                    <li>Membagikan akun ke orang lain (audit atas nama Anda).</li>
+                    <li>Menutup halaman sebelum notifikasi "tersimpan".</li>
+                </ul>
+            </div>
+        </div>
+
+        {{-- Bantuan --}}
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4 text-sm text-blue-800">
+            <i class="fas fa-headset mr-1"></i> Kendala saat input? Hubungi <strong>Tim IT</strong> lewat menu
+            <em>Chat Support IT</em> — sertakan tangkapan layar bila perlu.
+        </div>
+    </div>
+
     {{-- Role Pengguna --}}
     <div class="bg-white rounded-xl shadow-sm border p-4 md:p-6">
         <h3 class="text-base font-bold text-gray-800 mb-4 flex items-center gap-2">

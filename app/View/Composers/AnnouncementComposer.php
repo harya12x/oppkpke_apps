@@ -17,7 +17,7 @@ class AnnouncementComposer
 
         $announcements = collect();
 
-        if ($user && $user->canSeeAnnouncements()) {
+        if ($user && $user->canSeeAnnouncements() && $this->shouldShowFor($user)) {
             $announcements = Announcement::live()
                 ->orderByRaw("FIELD(type, 'critical','maintenance','warning','info')")
                 ->orderByDesc('created_at')
@@ -26,5 +26,18 @@ class AnnouncementComposer
         }
 
         $view->with('liveAnnouncements', $announcements);
+    }
+
+    /**
+     * Operator Daerah: banner HANYA muncul di Beranda (dashboard) — tidak
+     * mengganggu di setiap halaman. Role lain (mis. Master): semua halaman.
+     */
+    private function shouldShowFor($user): bool
+    {
+        if ($user->isDaerah()) {
+            return request()->routeIs('oppkpke.dashboard');
+        }
+
+        return true;
     }
 }

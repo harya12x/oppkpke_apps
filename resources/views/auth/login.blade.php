@@ -2,13 +2,19 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta name="robots" content="noindex, nofollow">
     <title>Login - OPPKPKE Sistem Pengentasan Kemiskinan</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        html, body { height: 100%; }
-        body { margin: 0; overflow: hidden; }
+        html, body { min-height: 100%; }
+        /* overflow-x disembunyikan (Ken Burns zoom), tapi vertikal boleh scroll di mobile */
+        body { margin: 0; overflow-x: hidden; }
+        /* Honeypot anti-bot: tak terlihat pengguna & pembaca layar, tapi diisi bot */
+        .hp-field { position: absolute !important; left: -9999px !important; top: -9999px !important;
+                    width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
         /* ── Slideshow background: 3 foto crossfade + zoom halus (Ken Burns) ── */
         .bg-slide {
@@ -52,19 +58,19 @@
     <div class="absolute inset-0 z-10" style="background: linear-gradient(120deg, rgba(15,23,42,.75) 0%, rgba(15,23,42,.55) 45%, rgba(15,23,42,.35) 100%);"></div>
 
     {{-- ── KONTEN ── --}}
-    <div class="relative z-20 min-h-screen flex flex-col lg:flex-row items-center justify-between gap-10 px-6 sm:px-10 lg:px-20 py-10 overflow-y-auto">
+    <div class="relative z-20 min-h-screen flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-8 sm:gap-10 px-5 sm:px-10 lg:px-20 py-8 sm:py-10 overflow-y-auto">
 
         {{-- Kiri: Logo + Judul --}}
         <div class="fade-up max-w-lg text-center lg:text-left" style="animation-delay:.05s">
-            <img src="{{ asset('Logo_app_new.png') }}" alt="Logo OPPKPKE" class="w-36 sm:w-40 h-auto mx-auto lg:mx-0 mb-5 drop-shadow-lg">
-            <h1 class="text-4xl sm:text-5xl font-extrabold leading-tight tracking-tight">
+            <img src="{{ asset('Logo_app_new.png') }}" alt="Logo OPPKPKE" class="w-24 sm:w-32 lg:w-40 h-auto mx-auto lg:mx-0 mb-4 sm:mb-5 drop-shadow-lg">
+            <h1 class="text-2xl sm:text-4xl lg:text-5xl font-extrabold leading-tight tracking-tight">
                 SISTEM INFORMASI<br>PENGENTASAN KEMISKINAN
             </h1>
-            <p class="text-slate-200 text-lg sm:text-xl mt-3 font-medium">Kabupaten Kotabaru</p>
+            <p class="text-slate-200 text-base sm:text-lg lg:text-xl mt-2 sm:mt-3 font-medium">Kabupaten Kotabaru</p>
         </div>
 
         {{-- Kanan: Kartu Login (glass) --}}
-        <div class="fade-up w-full max-w-md" style="animation-delay:.15s">
+        <div class="fade-up w-full max-w-md flex-shrink-0" style="animation-delay:.15s">
             <div class="bg-white/10 border border-white/20 backdrop-blur-xl rounded-2xl shadow-2xl p-7 sm:p-8">
                 <h2 class="text-2xl font-bold text-white">Login</h2>
                 <p class="text-slate-300 text-sm mt-1 mb-6">Gunakan akun yang terdaftar di sistem OPPKPKE.</p>
@@ -90,19 +96,32 @@
                     </div>
                 @endif
 
-                <form method="POST" action="{{ route('login.post') }}" class="space-y-5">
+                <form method="POST" action="{{ route('login.post') }}" class="space-y-5" id="loginForm" novalidate>
                     @csrf
+
+                    {{-- Honeypot anti-bot (harus tetap kosong; diisi = ditolak server) --}}
+                    <div class="hp-field" aria-hidden="true">
+                        <label>Jangan isi kolom ini
+                            <input type="text" name="website" tabindex="-1" autocomplete="off">
+                        </label>
+                    </div>
 
                     {{-- Email --}}
                     <div>
-                        <label class="block text-sm font-medium text-slate-200 mb-1.5">Email</label>
+                        <label for="email" class="block text-sm font-medium text-slate-200 mb-1.5">Email</label>
                         <div class="relative">
                             <i class="fas fa-envelope absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
                             <input type="email"
+                                   id="email"
                                    name="email"
                                    value="{{ old('email') }}"
                                    placeholder="Masukkan Email"
-                                   autocomplete="email"
+                                   autocomplete="username"
+                                   inputmode="email"
+                                   autocapitalize="none"
+                                   autocorrect="off"
+                                   spellcheck="false"
+                                   maxlength="150"
                                    required
                                    class="w-full pl-11 pr-4 py-2.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition text-sm @error('email') border-red-400 @enderror">
                         </div>
@@ -118,6 +137,7 @@
                                    name="password"
                                    placeholder="Masukkan Password"
                                    autocomplete="current-password"
+                                   maxlength="200"
                                    required
                                    class="w-full pl-11 pr-11 py-2.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition text-sm">
                             <button type="button"
@@ -135,11 +155,11 @@
                     </div>
 
                     {{-- Submit --}}
-                    <button type="submit"
-                            class="w-full text-white font-semibold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+                    <button type="submit" id="loginSubmit"
+                            class="w-full text-white font-semibold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
                             style="background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 55%, #0ea5e9 100%);">
-                        <i class="fas fa-arrow-right-to-bracket"></i>
-                        Masuk
+                        <i class="fas fa-arrow-right-to-bracket" id="loginIcon"></i>
+                        <span id="loginLabel">Masuk</span>
                     </button>
                 </form>
             </div>
@@ -162,6 +182,20 @@
                 icon.classList.replace('fa-eye-slash', 'fa-eye');
             }
         }
+
+        // Anti double-submit + feedback (cegah pengiriman ganda / spam klik)
+        (function () {
+            var form = document.getElementById('loginForm');
+            form.addEventListener('submit', function (e) {
+                if (!form.email.value.trim() || !form.password.value) return; // biarkan required native
+                if (form.dataset.submitting === '1') { e.preventDefault(); return; }
+                form.dataset.submitting = '1';
+                var btn = document.getElementById('loginSubmit');
+                btn.disabled = true;
+                document.getElementById('loginIcon').className = 'fas fa-spinner fa-spin';
+                document.getElementById('loginLabel').textContent = 'Memproses...';
+            });
+        }());
     </script>
 </body>
 </html>

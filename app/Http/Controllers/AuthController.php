@@ -20,6 +20,13 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
+        // Honeypot anti-bot: field 'website' harus kosong (tersembunyi dari manusia).
+        // Bot yang mengisi semua field akan ketahuan → tolak tanpa membocorkan alasan.
+        if (filled($request->input('website'))) {
+            \App\Models\AuditLog::record('auth.login_bot', 'Login diblokir (honeypot terisi)', null, ['email' => $request->input('email')]);
+            return back()->withErrors(['email' => 'Email atau password salah. Silakan coba lagi.']);
+        }
+
         $credentials = $request->validate([
             'email'    => 'required|email|max:150',
             'password' => 'required|max:200',

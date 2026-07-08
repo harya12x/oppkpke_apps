@@ -13,6 +13,9 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name',
+        'nama_lengkap',
+        'no_ktp',
+        'pic_completed_at',
         'email',
         'password',
         'role',
@@ -31,6 +34,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'last_login_at'     => 'datetime',
+            'pic_completed_at'  => 'datetime',
             'password'          => 'hashed',
             'is_active'         => 'boolean',
         ];
@@ -71,6 +75,15 @@ class User extends Authenticatable
     public function canSeeAnnouncements(): bool
     {
         return !$this->isItTeam();
+    }
+
+    /**
+     * Apakah identitas PIC (nama lengkap + no KTP) sudah dilengkapi?
+     * Prasyarat sebelum Operator Daerah boleh menginput laporan.
+     */
+    public function hasPicIdentity(): bool
+    {
+        return filled($this->nama_lengkap) && filled($this->no_ktp);
     }
 
     public function isActive(): bool

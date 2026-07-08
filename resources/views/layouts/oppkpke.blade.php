@@ -130,7 +130,22 @@
                 <span data-chat-unread class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 {{ $chatUnread ? '' : 'hidden' }}">{{ $chatUnread }}</span>
             </a>
 
+            <a href="{{ route('oppkpke.panduan') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.panduan') ? 'nav-active' : '' }}">
+                <i class="fas fa-book-open w-5 text-center flex-shrink-0 text-blue-300"></i>
+                <span class="text-sm font-medium">Panduan Input Laporan</span>
+            </a>
+
             <div class="border-t border-blue-700 my-2 mx-5"></div>
+
+            <a href="{{ route('oppkpke.pic.form') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.pic.form') ? 'nav-active' : '' }}">
+                <i class="fas fa-id-card w-5 text-center flex-shrink-0 {{ auth()->user()->hasPicIdentity() ? 'text-green-300' : 'text-yellow-300' }}"></i>
+                <span class="text-sm font-medium">Identitas PIC</span>
+                @unless(auth()->user()->hasPicIdentity())
+                    <span class="ml-auto bg-yellow-400 text-yellow-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">Wajib</span>
+                @endunless
+            </a>
 
             <a href="{{ route('oppkpke.profile.change-password') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.profile.change-password') ? 'nav-active' : '' }}">
@@ -152,6 +167,12 @@
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.announcements.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-bullhorn w-5 text-center flex-shrink-0 text-amber-300"></i>
                 <span class="text-sm font-medium">Pengumuman</span>
+            </a>
+
+            <a href="{{ route('admin.audit.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('admin.audit.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-clipboard-list w-5 text-center flex-shrink-0 text-pink-300"></i>
+                <span class="text-sm font-medium">Audit Log</span>
             </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
@@ -240,11 +261,6 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
                 <span class="text-sm">Pantau Chat</span>
-            </a>
-            <a href="{{ route('admin.audit.index') }}"
-               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.audit.*') ? 'nav-active' : '' }}">
-                <i class="fas fa-clipboard-list w-5 text-center flex-shrink-0 text-pink-300"></i>
-                <span class="text-sm">Audit Log</span>
             </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
