@@ -74,9 +74,6 @@ jobs:
             docker cp "$CID":/var/www/public/build ./public/build
             docker rm "$CID" > /dev/null
 
-            echo "🗄️  Jalankan migrasi (di container yang sedang jalan)..."
-            docker compose exec -T app php artisan migrate --force
-
             echo "📣 Sinyal queue:restart supaya worker lama selesai job berjalan dulu..."
             # || true: aman kalau ini deploy pertama kali dan worker belum pernah ada.
             docker compose exec -T app php artisan queue:restart || true
@@ -92,6 +89,13 @@ jobs:
             # ----------------------------------------
             echo "⏳ Tunggu container siap..."
             sleep 3
+
+            # Migrasi HARUS jalan di container BARU (setelah swap): kode di-bake ke
+            # image, jadi container lama belum punya file migrasi terbaru. Kalau migrate
+            # dijalankan sebelum swap (di container lama), migrasi baru TIDAK terdeteksi
+            # → tabel baru (mis. `pics`) tidak pernah dibuat → error "table doesn't exist".
+            echo "🗄️  Jalankan migrasi (di container baru)..."
+            docker compose exec -T app php artisan migrate --force
 
             echo "🔗 Buat storage symlink..."
             docker compose exec -T app php artisan storage:link || true

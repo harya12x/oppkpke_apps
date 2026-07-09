@@ -463,7 +463,12 @@ class OppkpkeService
 
         if (!$pdName || !$skName) return null;
 
-        $normalize = fn(string $s) => strtolower(preg_replace('/\s+/', ' ', trim($s)));
+        // Normalisasi nama untuk pencocokan: buang SEMUA non-alfanumerik (koma, titik,
+        // newline, dsb) jadi spasi lalu rapatkan. Tanpa ini, nama dari file yang cuma
+        // beda tanda baca — mis. "Dinas ... Perempuan, Perlindungan Anak, ..." vs
+        // "Dinas ... Perempuan Perlindungan Anak ..." — dianggap beda → perangkat
+        // daerah (dan operatornya) terduplikasi.
+        $normalize = fn(string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
         $pd = PerangkatDaerah::all()->first(fn($p) =>
             $normalize($p->nama) === $normalize($pdName) ||
             str_contains($normalize($p->nama), $normalize($pdName)) ||

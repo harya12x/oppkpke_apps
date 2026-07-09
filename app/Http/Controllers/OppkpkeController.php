@@ -108,6 +108,7 @@ class OppkpkeController extends Controller
             ->join('kegiatan as k',      'sk.kegiatan_id',     '=', 'k.id')
             ->join('programs as p',      'k.program_id',       '=', 'p.id')
             ->where('lo.tahun', $tahun)
+            ->whereNull('lo.deleted_at')   // WAJIB: DB::table melewati scope SoftDeletes Eloquent; tanpa ini baris yang sudah dihapus (mis. hasil import replace_year) ikut dijumlah → anggaran/realisasi jadi dobel.
             ->groupBy('p.perangkat_daerah_id')
             ->select(
                 'p.perangkat_daerah_id as pd_id',
@@ -1542,6 +1543,7 @@ class OppkpkeController extends Controller
             ->join('kegiatan as k',      'sk.kegiatan_id',     '=', 'k.id')
             ->join('programs as p',      'k.program_id',       '=', 'p.id')
             ->where('lo.tahun', $tahun)
+            ->whereNull('lo.deleted_at')   // WAJIB: exclude baris yang sudah di-soft-delete (lihat catatan di dashboard()).
             ->groupBy('p.perangkat_daerah_id')
             ->select(
                 'p.perangkat_daerah_id as pd_id',
