@@ -36,16 +36,12 @@ jobs:
             echo "========================================"
 
             # ----------------------------------------
-            # STEP 0: Izinkan git bekerja di direktori ini walau ownership
-            # tidak cocok dengan user SSH ("dubious ownership" — proteksi
-            # git sejak CVE-2022-24765). Idempotent, aman diulang tiap deploy.
+            # STEP 0: Izinkan git bekerja di direktori ini
             # ----------------------------------------
             git config --global --add safe.directory /var/www/oppkpke_apps
 
             # ----------------------------------------
-            # STEP 1: Sinkronkan kode (paksa sama dengan repo)
-            # reset --hard mencegah deploy gagal gara-gara
-            # perubahan lokal di server yang memblokir merge.
+            # STEP 1: Sinkronkan kode
             # ----------------------------------------
             echo "📥 Sinkronkan kode dari GitHub..."
             BEFORE=$(git rev-parse HEAD)
@@ -61,76 +57,55 @@ jobs:
 
             # ----------------------------------------
             # STEP 2: Build image baru & swap container
-            # Kode di-bake ke dalam image (app TIDAK mount kode host),
-            # jadi perubahan kode HANYA muncul setelah rebuild + swap.
-            # Layer caching bikin rebuild cepat kalau dependency tak berubah.
             # ----------------------------------------
             echo "🔨 Build image baru... (server lama tetap jalan selama build)"
             docker compose build app
 
             # ----------------------------------------
-            # STEP 2b: Sinkronkan hasil build Vite (public/build) ke host.
-            # nginx menyajikan *.css/*.js sebagai file statis langsung dari bind-mount
-            # host (.:/var/www), BUKAN dari dalam container app. Tapi `npm run build`
-            # cuma jalan di dalam image saat docker build — hasilnya cuma ada di
-            # filesystem image, tidak pernah otomatis nyampe ke host. public/build juga
-            # di-.gitignore, jadi git pull tidak membantu. Tanpa langkah ini, nginx akan
-            # terus menyajikan public/build versi lama/basi (atau 404 kalau kosong) —
-            # inilah penyebab asset CSS/JS 404 & halaman jadi berantakan tanpa styling.
+            # STEP 2b: Sinkronkan hasil build Vite ke host
             # ----------------------------------------
-            echo "📦 Sinkronkan asset build (Vite) dari image ke host untuk nginx..."
+            echo "📦 Sinkronkan asset build (Vite) dari image ke host..."
             rm -rf public/build
             CID=$(docker create oppkpke_apps-app:latest)
             docker cp "$CID":/var/www/public/build ./public/build
             docker rm "$CID" > /dev/null
 
-            echo "📣 Sinyal queue:restart supaya worker lama selesai job berjalan dulu..."
-            # || true: aman kalau ini deploy pertama kali dan worker belum pernah ada.
+            echo "📣 Sinyal queue:restart supaya worker lama selesai job..."
             docker compose exec -T app php artisan queue:restart || true
 
             echo "⚡ Swap ke container baru (downtime < 1 detik)..."
-            # worker ikut di-recreate: kode di-bake ke image sama seperti app
-            # (tidak ada bind-mount kode), jadi worker HARUS di-recreate juga supaya
-            # menjalankan kode/Job class terbaru. --no-deps mencegah nginx ikut restart.
             docker compose up -d --no-deps app worker
 
             # ----------------------------------------
             # STEP 3: Post-deploy artisan commands
             # ----------------------------------------
-            echo "⏳ Tunggu container siap..."
-            sleep 3
+            echo "⏳ Tunggu container & network siap..."
+            sleep 10
 
-            # Migrasi HARUS jalan di container BARU (setelah swap): kode di-bake ke
-            # image, jadi container lama belum punya file migrasi terbaru. Kalau migrate
-            # dijalankan sebelum swap (di container lama), migrasi baru TIDAK terdeteksi
-            # → tabel baru (mis. `pics`) tidak pernah dibuat → error "table doesn't exist".
-            echo "🗄️  Jalankan migrasi (di container baru)..."
-            docker compose exec -T app php artisan migrate --force
+            echo "🧹 Refresh package manifest & bersihkan cache lama..."
+            docker compose exec -T app php artisan optimize:clear
+
+            # Migrasi akan tetap berjalan normal jika ada tabel/kolom baru.
+            # Ditambahkan 'timeout 60s' agar tidak menggantung selamanya jika terjadi DB Lock.
+            echo "🗄️  Jalankan migrasi database..."
+            docker compose exec -T app timeout 60s php artisan migrate --force
 
             echo "🔗 Buat storage symlink..."
             docker compose exec -T app php artisan storage:link || true
 
-            echo "🧹 Refresh package manifest & rebuild cache..."
-            # optimize:clear membersihkan cache basi di named volume (config/route/view/compiled).
-            docker compose exec -T app php artisan optimize:clear
-            # package:discover WAJIB: named volume bootstrap/cache menutupi manifest dari image,
-            # tanpa ini package baru (mis. dompdf) tidak terdaftar → "Target class does not exist".
+            echo "📦 Daftarkan ulang package & bangun cache baru..."
             docker compose exec -T app php artisan package:discover --ansi
             docker compose exec -T app php artisan optimize
 
             # ----------------------------------------
             # STEP 3b: Pastikan storage & cache writable oleh www-data
-            # Artisan di atas jalan sebagai root → bisa bikin file root-owned
-            # di storage/bootstrap-cache yang memblokir web (www-data) → 500.
             # ----------------------------------------
             echo "🔐 Perbaiki kepemilikan storage & bootstrap/cache..."
             docker compose exec -T app chown -R www-data:www-data storage bootstrap/cache
             docker compose exec -T app chmod -R 775 storage bootstrap/cache
 
             # ----------------------------------------
-            # STEP 3c: Reload nginx supaya perubahan default.conf (bind-mount) terbaca.
-            # nginx baca config hanya saat start/reload — git reset sudah update file
-            # di host, tapi container nginx perlu di-reload agar aktif.
+            # STEP 3c: Reload nginx
             # ----------------------------------------
             echo "🔁 Reload konfigurasi nginx..."
             docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload || true
