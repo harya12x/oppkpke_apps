@@ -5,9 +5,19 @@ on:
     branches:
       - main
 
+# Serialisasi deploy: hanya satu deploy jalan pada satu waktu. Push baru
+# tidak dibatalkan di tengah (cancel-in-progress: false) supaya build image +
+# migrate + swap tidak terpotong; ia mengantre sampai deploy sebelumnya selesai.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Kalau SSH/docker build nyangkut, job dibunuh di 15 menit — runner dilepas,
+    # tidak menggantung memakai slot runner berjam-jam (default 6 jam).
+    timeout-minutes: 15
 
     steps:
       - name: Deploy via SSH
