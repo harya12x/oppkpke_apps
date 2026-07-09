@@ -76,7 +76,12 @@ class UserController extends Controller
             ];
         })->values();
 
-        return view('admin.users.index', compact('users', 'perangkatDaerah', 'summary', 'pdInfo'));
+        // Deteksi perangkat daerah (aktif) yang belum punya akun operator — dipakai
+        // untuk badge indikator di tombol Generate Credential agar admin langsung
+        // tahu ada PD baru yang butuh akun tanpa harus membuka modal dulu.
+        $pdTanpaAkun = $pdInfo->where('has_operator', false)->count();
+
+        return view('admin.users.index', compact('users', 'perangkatDaerah', 'summary', 'pdInfo', 'pdTanpaAkun'));
     }
 
     // =========================================

@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\OppkpkeController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\SessionController;
 use App\Http\Controllers\UserController;
 
 // =====================================================
@@ -52,6 +53,9 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     // --------------------------------------------------
     Route::get('/lengkapi-identitas',  [ProfileController::class, 'picForm'])->name('pic.form');
     Route::post('/lengkapi-identitas', [ProfileController::class, 'picSave'])->name('pic.save');
+    // PIC tambahan (undang PIC lain — hanya catatan identitas, tanpa akun login).
+    Route::post('/pic',            [ProfileController::class, 'picInvite'])->middleware('throttle:30,1')->name('pic.invite');
+    Route::delete('/pic/{pic}',    [ProfileController::class, 'picInviteDestroy'])->name('pic.invite.destroy');
 
     // --------------------------------------------------
     // INPUT LAPORAN - semua role (difilter by role di controller)
@@ -164,6 +168,15 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
 
 Route::prefix('admin/audit')->name('admin.audit.')->middleware(['auth', 'role:it_team,master'])->group(function () {
     Route::get('/', [\App\Http\Controllers\AuditLogController::class, 'index'])->name('index');
+});
+
+// =====================================================
+// SESI LOGIN — pantau & logout paksa (Tim IT & Master)
+// =====================================================
+
+Route::prefix('admin/sessions')->name('admin.sessions.')->middleware(['auth', 'role:it_team,master'])->group(function () {
+    Route::get('/',              [SessionController::class, 'index'])->name('index');
+    Route::post('/force-logout', [SessionController::class, 'forceLogout'])->middleware('throttle:30,1')->name('force-logout');
 });
 
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {

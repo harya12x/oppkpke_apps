@@ -122,10 +122,17 @@
                 <span class="sm:hidden">PDF</span>
             </button>
             <button type="button" onclick="openGenerateModal()"
-                    class="bg-purple-600 hover:bg-purple-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+                    class="relative bg-purple-600 hover:bg-purple-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5"
+                    @if($pdTanpaAkun > 0) title="{{ $pdTanpaAkun }} perangkat daerah belum punya akun operator" @endif>
                 <i class="fas fa-wand-magic-sparkles"></i>
                 <span class="hidden sm:inline">Generate Credential</span>
                 <span class="sm:hidden">Generate</span>
+                @if($pdTanpaAkun > 0)
+                    {{-- Badge indikator: jumlah perangkat daerah yang belum punya akun --}}
+                    <span class="absolute -top-2 -right-2 min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-amber-400 text-purple-900 text-xs font-bold rounded-full shadow ring-2 ring-white animate-pulse">
+                        {{ $pdTanpaAkun }}
+                    </span>
+                @endif
             </button>
             <button type="button" onclick="openCreateModal()"
                     class="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">

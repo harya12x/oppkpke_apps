@@ -100,18 +100,35 @@ class OppkpkeController extends Controller
             'per_strategi'         => $perStrategi,
         ];
 
-        // Rekap per perangkat daerah — numeric-indexed array with 'nama' key
-        $rekapPerangkat = LaporanOppkpke::where('tahun', $tahun)
-            ->with('subKegiatan.kegiatan.program.perangkatDaerah')
+        // Rekap per perangkat daerah — SEMUA PD aktif (yang tanpa data tetap muncul
+        // dengan nilai 0). Satu query agregat via tabel programs (bukan relasi per-row)
+        // lalu digabung dengan seluruh PD aktif. Tabel di view punya toggle 10/25/Semua.
+        $sumsPerPd = \DB::table('laporan_oppkpke as lo')
+            ->join('sub_kegiatan as sk', 'lo.sub_kegiatan_id', '=', 'sk.id')
+            ->join('kegiatan as k',      'sk.kegiatan_id',     '=', 'k.id')
+            ->join('programs as p',      'k.program_id',       '=', 'p.id')
+            ->where('lo.tahun', $tahun)
+            ->groupBy('p.perangkat_daerah_id')
+            ->select(
+                'p.perangkat_daerah_id as pd_id',
+                \DB::raw('SUM(lo.alokasi_anggaran) as alokasi'),
+                \DB::raw('SUM(lo.realisasi_total)  as realisasi')
+            )
             ->get()
-            ->groupBy(fn($l) => optional($l->subKegiatan?->kegiatan?->program?->perangkatDaerah)->nama ?? 'Unknown')
-            ->map(fn($group, $nama) => [
-                'nama'      => $nama,
-                'alokasi'   => (float) $group->sum(fn($l) => (float) $l->alokasi_anggaran),
-                'realisasi' => (float) $group->sum(fn($l) => (float) $l->realisasi_total),
-            ])
+            ->keyBy('pd_id');
+
+        $rekapPerangkat = PerangkatDaerah::where('is_active', true)
+            ->orderBy('nama')
+            ->get(['id', 'nama'])
+            ->map(function ($pd) use ($sumsPerPd) {
+                $row = $sumsPerPd->get($pd->id);
+                return [
+                    'nama'      => $pd->nama,
+                    'alokasi'   => (float) ($row->alokasi   ?? 0),
+                    'realisasi' => (float) ($row->realisasi ?? 0),
+                ];
+            })
             ->sortByDesc('realisasi')
-            ->take(10)
             ->values()
             ->toArray();
 

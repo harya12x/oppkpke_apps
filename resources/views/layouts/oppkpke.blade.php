@@ -169,6 +169,12 @@
                 <span class="text-sm font-medium">Pengumuman</span>
             </a>
 
+            <a href="{{ route('admin.sessions.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('admin.sessions.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-user-clock w-5 text-center flex-shrink-0 text-green-300"></i>
+                <span class="text-sm font-medium">Sesi Login</span>
+            </a>
+
             <a href="{{ route('admin.audit.index') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('admin.audit.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-clipboard-list w-5 text-center flex-shrink-0 text-pink-300"></i>
@@ -261,6 +267,11 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
                 <span class="text-sm">Pantau Chat</span>
+            </a>
+            <a href="{{ route('admin.sessions.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.sessions.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-user-clock w-5 text-center flex-shrink-0 text-green-300"></i>
+                <span class="text-sm">Sesi Login</span>
             </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>

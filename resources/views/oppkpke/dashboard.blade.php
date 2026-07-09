@@ -191,10 +191,20 @@
 
     {{-- ── TABLE REKAP ─────────────────────────────────────── --}}
     <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div class="px-4 md:px-6 py-4 border-b bg-gray-50">
+        <div class="px-4 md:px-6 py-4 border-b bg-gray-50 flex flex-wrap items-center justify-between gap-2">
             <h4 class="font-semibold text-gray-800 text-sm md:text-base">
                 <i class="fas fa-table mr-2 text-blue-500"></i>Rekap Anggaran per Perangkat Daerah
+                <span class="text-xs font-normal text-gray-400">({{ count($rekapPerangkat ?? []) }} perangkat daerah)</span>
             </h4>
+            <div class="flex items-center gap-2">
+                <label for="rekapLimit" class="text-xs text-gray-500">Tampilkan</label>
+                <select id="rekapLimit" onchange="applyRekapLimit()"
+                        class="border border-gray-300 rounded-lg text-xs px-2 py-1.5 focus:ring-2 focus:ring-blue-500">
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="all">Semua</option>
+                </select>
+            </div>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-sm min-w-[500px]">
@@ -207,13 +217,13 @@
                         <th class="px-3 md:px-4 py-3 text-center font-medium text-gray-700 text-xs">Progress</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y">
+                <tbody class="divide-y" id="rekapBody">
                     @foreach($rekapPerangkat ?? [] as $index => $item)
                     @php
                         $persen     = ($item['alokasi'] ?? 0) > 0 ? round((($item['realisasi'] ?? 0) / $item['alokasi']) * 100, 1) : 0;
                         $colorClass = $persen >= 80 ? 'bg-green-500' : ($persen >= 50 ? 'bg-yellow-500' : 'bg-red-500');
                     @endphp
-                    <tr class="hover:bg-gray-50">
+                    <tr class="hover:bg-gray-50 rekap-row" data-index="{{ $index }}">
                         <td class="px-3 md:px-4 py-2.5 text-gray-500 text-xs">{{ $index + 1 }}</td>
                         <td class="px-3 md:px-4 py-2.5 font-medium text-xs md:text-sm">{{ $item['nama'] }}</td>
                         <td class="px-3 md:px-4 py-2.5 text-right font-mono text-xs">Rp {{ number_format($item['alokasi'], 0, ',', '.') }}</td>
@@ -228,9 +238,13 @@
                         </td>
                     </tr>
                     @endforeach
+                    @if(empty($rekapPerangkat))
+                    <tr><td colspan="5" class="px-4 py-8 text-center text-gray-400 text-sm">Belum ada data anggaran.</td></tr>
+                    @endif
                 </tbody>
             </table>
         </div>
+        <div id="rekapMoreInfo" class="px-4 md:px-6 py-2.5 border-t bg-gray-50 text-xs text-gray-500 hidden"></div>
     </div>
 
     {{-- ── QUICK ACCESS ────────────────────────────────────── --}}
@@ -270,6 +284,27 @@
 <script>
 var statsPerStrategi = @json($stats['per_strategi'] ?? []);
 var rekapPerangkat   = @json($rekapPerangkat ?? []);
+
+// ── Rekap Anggaran per Perangkat Daerah — toggle 10 / 25 / Semua ──────
+function applyRekapLimit() {
+    var sel   = document.getElementById('rekapLimit');
+    var rows  = document.querySelectorAll('#rekapBody .rekap-row');
+    var info  = document.getElementById('rekapMoreInfo');
+    var limit = sel.value === 'all' ? rows.length : parseInt(sel.value, 10);
+
+    rows.forEach(function (tr, i) {
+        tr.style.display = (i < limit) ? '' : 'none';
+    });
+
+    var shown = Math.min(limit, rows.length);
+    if (rows.length > shown) {
+        info.textContent = 'Menampilkan ' + shown + ' dari ' + rows.length + ' perangkat daerah (urut realisasi tertinggi).';
+        info.classList.remove('hidden');
+    } else {
+        info.classList.add('hidden');
+    }
+}
+document.addEventListener('DOMContentLoaded', applyRekapLimit);
 
 var strategiLabels    = statsPerStrategi.map(function(s) { return s.nama.length > 22 ? s.nama.substring(0, 22) + '…' : s.nama; });
 var strategiAlokasi   = statsPerStrategi.map(function(s) { return +(s.alokasi)   || 0; });
