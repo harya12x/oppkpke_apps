@@ -114,6 +114,14 @@ jobs:
             docker compose exec -T app chmod -R 775 storage bootstrap/cache
 
             # ----------------------------------------
+            # STEP 3c: Reload nginx supaya perubahan default.conf (bind-mount) terbaca.
+            # nginx baca config hanya saat start/reload — git reset sudah update file
+            # di host, tapi container nginx perlu di-reload agar aktif.
+            # ----------------------------------------
+            echo "🔁 Reload konfigurasi nginx..."
+            docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload || true
+
+            # ----------------------------------------
             # STEP 4: Verifikasi deploy berhasil
             # ----------------------------------------
             echo "🔍 Verifikasi container berjalan..."
