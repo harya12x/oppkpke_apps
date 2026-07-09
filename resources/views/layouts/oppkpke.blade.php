@@ -466,12 +466,19 @@
             var urlYear  = new URLSearchParams(window.location.search).get('tahun');
             var lsYear   = localStorage.getItem('oppkpke_tahun');
             var selEl    = document.getElementById('global-tahun');
+            if (!selEl) return;
+
+            // Halaman import (termasuk /import/preview & /import-rat/preview) adalah
+            // target form POST-only. Menambah ?tahun via window.location = GET akan
+            // memicu 405 di endpoint /preview. Halaman import juga punya selektor
+            // tahun sendiri, jadi auto-redirect tahun global tidak diperlukan di sini.
+            var isImportPage = window.location.pathname.indexOf('/import') !== -1;
 
             if (urlYear) {
                 // URL has explicit year → save it
                 localStorage.setItem('oppkpke_tahun', urlYear);
                 selEl.value = urlYear;
-            } else if (lsYear) {
+            } else if (lsYear && !isImportPage) {
                 // No year in URL → redirect once with saved year
                 var u = new URL(window.location.href);
                 u.searchParams.set('tahun', lsYear);
@@ -492,6 +499,9 @@
 
         $('#global-tahun').on('change', function () {
             localStorage.setItem('oppkpke_tahun', this.value);
+            // Di halaman import (termasuk /preview yang POST-only), cukup simpan
+            // pilihan tahun tanpa reload URL sekarang — reload GET ke /preview = 405.
+            if (window.location.pathname.indexOf('/import') !== -1) return;
             var url = new URL(window.location.href);
             url.searchParams.set('tahun', this.value);
             window.location.href = url.toString();
