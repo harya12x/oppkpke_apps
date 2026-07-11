@@ -13,6 +13,7 @@ class Kegiatan extends Model
     
     protected $fillable = [
         'program_id',
+        'kode',
         'nama_kegiatan',
         'is_active',
     ];

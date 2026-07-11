@@ -449,6 +449,118 @@ class UserController extends Controller
     }
 
     // =========================================
+    // TAMBAH OPERATOR DAERAH — alur khusus, terpandu, aman
+    // =========================================
+
+    /** Data untuk modal: semua PD aktif + status operator + email saran (unik). */
+    public function operatorPrepare()
+    {
+        $existingEmails = User::pluck('email')->map(fn ($e) => strtolower($e))->all();
+
+        $operatorByPd = User::where('role', 'daerah')->whereNotNull('perangkat_daerah_id')
+            ->get(['name', 'perangkat_daerah_id'])
+            ->keyBy('perangkat_daerah_id');
+
+        $used  = [];
+        $items = PerangkatDaerah::where('is_active', true)->orderBy('nama')->get(['id', 'nama', 'singkatan'])
+            ->map(function ($pd) use ($existingEmails, &$used, $operatorByPd) {
+                $base = $this->generateEmailPrefix($pd->nama);
+                $prefix = $base; $n = 2;
+                while (in_array($prefix . '@oppkpke.go.id', $existingEmails, true) || in_array($prefix, $used, true)) {
+                    $prefix = $base . $n++;
+                }
+                $used[] = $prefix;
+                $op = $operatorByPd->get($pd->id);
+
+                return [
+                    'id'              => $pd->id,
+                    'nama'            => $pd->nama,
+                    'singkatan'       => $pd->singkatan,
+                    'has_operator'    => $op !== null,
+                    'operator_name'   => $op?->name,
+                    'suggested_email' => $prefix . '@oppkpke.go.id',
+                ];
+            })->values();
+
+        return response()->json(['success' => true, 'items' => $items]);
+    }
+
+    /** Buat satu akun operator daerah. Mengembalikan kredensial (tampil sekali). */
+    public function storeOperator(Request $request)
+    {
+        $validated = $request->validate([
+            'perangkat_daerah_id' => 'required|exists:perangkat_daerah,id',
+            'name'                => 'required|string|min:3|max:120',
+            'email'               => 'required|email|max:150|unique:users,email',
+            'password'            => ['required', Password::min(10)->letters()->numbers()->mixedCase()],
+            'allow_duplicate'     => 'sometimes|boolean',
+        ], [
+            'perangkat_daerah_id.required' => 'Perangkat daerah wajib dipilih.',
+            'perangkat_daerah_id.exists'   => 'Perangkat daerah tidak valid.',
+            'name.required'  => 'Nama operator wajib diisi.',
+            'email.required' => 'Email wajib diisi.',
+            'email.unique'   => 'Email sudah digunakan oleh akun lain.',
+            'password.min'   => 'Password minimal 10 karakter (huruf besar-kecil + angka).',
+        ]);
+
+        $allowDuplicate = $request->boolean('allow_duplicate');
+
+        try {
+            // Kunci baris PD supaya dua pembuatan operator utk PD yang sama serialize di sini
+            // (baris users belum ada untuk dikunci — jadi baris induk PD yang dikunci).
+            $result = DB::transaction(function () use ($validated, $allowDuplicate) {
+                $pd = PerangkatDaerah::where('id', $validated['perangkat_daerah_id'])->lockForUpdate()->firstOrFail();
+
+                $existing = User::where('role', 'daerah')->where('perangkat_daerah_id', $pd->id)->first();
+                if ($existing && !$allowDuplicate) {
+                    return ['conflict' => $existing->name];   // belum ada tulisan → commit aman
+                }
+
+                $user = User::create([
+                    'name'                => $validated['name'],
+                    'email'               => strtolower($validated['email']),
+                    'password'            => Hash::make($validated['password']),
+                    'role'                => 'daerah',
+                    'perangkat_daerah_id' => $pd->id,
+                    'is_active'           => true,
+                ]);
+
+                return ['user' => $user];
+            });
+        } catch (QueryException $e) {
+            // Backstop unique email (race antar submit) → pesan ramah, bukan 500 SQL.
+            if ($e->getCode() === '23000') {
+                return response()->json(['success' => false, 'message' => 'Email sudah digunakan (bentrok saat penyimpanan).'], 422);
+            }
+            throw $e;
+        }
+
+        if (isset($result['conflict'])) {
+            return response()->json([
+                'success'       => false,
+                'needs_confirm' => true,
+                'message'       => "Perangkat daerah ini sudah punya operator ({$result['conflict']}). Centang \"tetap buat operator kedua\" untuk melanjutkan.",
+            ], 409);
+        }
+
+        $user = $result['user'];
+
+        // PENTING: password TIDAK pernah dicatat ke audit — hanya email & role.
+        AuditLog::record('user.created', "Membuat operator daerah {$user->email}", $user, ['via' => 'tambah_operator']);
+
+        return response()->json([
+            'success'     => true,
+            'message'     => "Operator <strong>{$user->name}</strong> berhasil dibuat.",
+            'credentials' => [
+                'name'             => $user->name,
+                'email'            => $user->email,
+                'password'         => $validated['password'],   // plaintext, tampil sekali untuk diserahkan
+                'perangkat_daerah' => $user->perangkatDaerah?->nama,
+            ],
+        ]);
+    }
+
+    // =========================================
     // Helper — generate email prefix dari nama PD
     // =========================================
 

@@ -134,6 +134,12 @@
                     </span>
                 @endif
             </button>
+            <button type="button" onclick="openOperatorModal()"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+                <i class="fas fa-id-badge"></i>
+                <span class="hidden sm:inline">Tambah Operator</span>
+                <span class="sm:hidden">Operator</span>
+            </button>
             <button type="button" onclick="openCreateModal()"
                     class="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
                 <i class="fas fa-user-plus"></i>
@@ -747,6 +753,117 @@
     </div>
 </div>
 
+{{-- ══════════════════════════════════════════════════════════════
+     MODAL: TAMBAH OPERATOR DAERAH (alur terpandu)
+══════════════════════════════════════════════════════════════ --}}
+<div id="modalOperator" class="fixed inset-0 z-[150] hidden items-center justify-center p-3 md:p-4">
+    <div class="absolute inset-0 bg-black/50" onclick="closeModal('modalOperator')"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg z-10 overflow-hidden flex flex-col max-h-[92vh]">
+        <div class="bg-gradient-to-r from-indigo-600 to-indigo-700 px-5 py-4 flex items-center justify-between flex-shrink-0">
+            <h3 class="text-white font-semibold flex items-center gap-2 text-sm md:text-base">
+                <i class="fas fa-id-badge"></i> Tambah Operator Daerah
+            </h3>
+            <button onclick="closeModal('modalOperator')" class="text-white/70 hover:text-white transition"><i class="fas fa-times text-xl"></i></button>
+        </div>
+
+        {{-- STATE 1: FORM --}}
+        <div id="opForm" class="p-4 md:p-5 space-y-4 overflow-y-auto">
+            <div id="opError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm"></div>
+
+            <p id="opHint" class="text-xs text-gray-500"></p>
+
+            {{-- Perangkat Daerah --}}
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Perangkat Daerah <span class="text-red-500">*</span></label>
+                <select id="opPd" onchange="opPdChanged()"
+                        class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 bg-white">
+                    <option value="">Memuat…</option>
+                </select>
+                <div id="opPdWarning" class="hidden mt-2 bg-orange-50 border border-orange-200 text-orange-700 rounded-lg px-3 py-2 text-xs">
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" id="opAllowDup" class="mt-0.5 rounded border-orange-300 text-orange-600 focus:ring-orange-500">
+                        <span id="opPdWarningText"></span>
+                    </label>
+                </div>
+            </div>
+
+            {{-- Nama --}}
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Nama Operator <span class="text-red-500">*</span></label>
+                <input type="text" id="opName" maxlength="120" placeholder="Nama tampilan operator"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500">
+            </div>
+
+            {{-- Email --}}
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Email <span class="text-red-500">*</span></label>
+                <input type="email" id="opEmail" autocomplete="off" placeholder="operator@oppkpke.go.id"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500">
+                <p class="text-xs text-gray-400 mt-1">Otomatis dari nama perangkat daerah — boleh diubah.</p>
+            </div>
+
+            {{-- Password --}}
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Password <span class="text-red-500">*</span></label>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <input type="text" id="opPassword" autocomplete="off"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 pr-9">
+                        <button type="button" onclick="opCopy('opPassword')" title="Salin"
+                                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><i class="fas fa-copy text-sm"></i></button>
+                    </div>
+                    <button type="button" onclick="opGenPassword()" title="Buat password baru"
+                            class="px-3 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600 text-sm flex items-center gap-1.5">
+                        <i class="fas fa-rotate"></i> <span class="hidden sm:inline">Acak</span>
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">Dibuat otomatis (kuat). Min. 10 karakter, ada huruf besar-kecil &amp; angka.</p>
+            </div>
+
+            <div class="flex gap-2 md:gap-3 pt-1">
+                <button onclick="closeModal('modalOperator')" class="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition">Batal</button>
+                <button id="opSubmitBtn" onclick="submitOperator()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2">
+                    <i class="fas fa-user-plus"></i> Buat Operator
+                </button>
+            </div>
+        </div>
+
+        {{-- STATE 2: SUKSES — kartu kredensial --}}
+        <div id="opSuccess" class="hidden p-5 md:p-6 overflow-y-auto">
+            <div class="text-center mb-4">
+                <div class="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2"><i class="fas fa-circle-check text-green-500 text-3xl"></i></div>
+                <h4 class="font-bold text-gray-800 text-lg">Operator Berhasil Dibuat</h4>
+                <p class="text-sm text-gray-500">Serahkan kredensial berikut ke operator.</p>
+            </div>
+
+            <div class="bg-gray-50 border rounded-xl divide-y divide-gray-200 text-sm">
+                <div class="flex items-center justify-between px-4 py-3">
+                    <div><p class="text-xs text-gray-500">Perangkat Daerah</p><p id="credPd" class="font-medium text-gray-800"></p></div>
+                </div>
+                <div class="flex items-center justify-between px-4 py-3 gap-2">
+                    <div class="min-w-0"><p class="text-xs text-gray-500">Email</p><p id="credEmail" class="font-mono font-medium text-gray-800 truncate"></p></div>
+                    <button onclick="opCopyText(document.getElementById('credEmail').textContent)" class="text-indigo-600 hover:text-indigo-800 text-xs flex items-center gap-1 flex-shrink-0"><i class="fas fa-copy"></i> Salin</button>
+                </div>
+                <div class="flex items-center justify-between px-4 py-3 gap-2">
+                    <div class="min-w-0"><p class="text-xs text-gray-500">Password</p><p id="credPass" class="font-mono font-medium text-gray-800 truncate"></p></div>
+                    <button onclick="opCopyText(document.getElementById('credPass').textContent)" class="text-indigo-600 hover:text-indigo-800 text-xs flex items-center gap-1 flex-shrink-0"><i class="fas fa-copy"></i> Salin</button>
+                </div>
+            </div>
+
+            <div class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-800 mt-3 flex items-start gap-2">
+                <i class="fas fa-triangle-exclamation mt-0.5"></i>
+                <span>Password <strong>hanya ditampilkan sekali</strong> ini. Simpan/serahkan sekarang, dan minta operator segera menggantinya setelah login.</span>
+            </div>
+
+            <div class="flex gap-2 md:gap-3 pt-4">
+                <button onclick="opCopyAll()" class="flex-1 border border-indigo-300 text-indigo-700 py-2 rounded-lg text-sm font-medium hover:bg-indigo-50 transition flex items-center justify-center gap-1.5"><i class="fas fa-copy"></i> Salin Semua</button>
+                <button onclick="openOperatorModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium transition">Buat Lagi</button>
+                <button onclick="closeModal('modalOperator'); location.reload();" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-semibold transition">Selesai</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @endsection
 
 @push('scripts')
@@ -792,6 +909,128 @@ function closeModal(id) {
     var el = document.getElementById(id);
     el.classList.add('hidden');
     el.classList.remove('flex');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TAMBAH OPERATOR DAERAH — alur terpandu
+// ══════════════════════════════════════════════════════════════════════
+var _opItems = {};
+
+function _opEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
+// Password kuat via crypto (tanpa karakter ambigu l/o/0/1/I/O).
+function opStrongPassword() {
+    var lower = 'abcdefghijkmnpqrstuvwxyz', upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ', dig = '23456789', sym = '!@#$%*?';
+    var all = lower + upper + dig + sym;
+    function pick(set) { var a = new Uint32Array(1); crypto.getRandomValues(a); return set[a[0] % set.length]; }
+    var out = [pick(lower), pick(upper), pick(dig), pick(sym)];
+    for (var i = out.length; i < 14; i++) out.push(pick(all));
+    for (var j = out.length - 1; j > 0; j--) { var b = new Uint32Array(1); crypto.getRandomValues(b); var k = b[0] % (j + 1); var t = out[j]; out[j] = out[k]; out[k] = t; }
+    return out.join('');
+}
+
+function openOperatorModal() {
+    document.getElementById('opForm').style.display = '';
+    document.getElementById('opSuccess').classList.add('hidden');
+    document.getElementById('opError').classList.add('hidden');
+    document.getElementById('opPdWarning').classList.add('hidden');
+    document.getElementById('opAllowDup').checked = false;
+    document.getElementById('opName').value = '';
+    document.getElementById('opEmail').value = '';
+    document.getElementById('opPassword').value = opStrongPassword();
+    var sel = document.getElementById('opPd');
+    sel.innerHTML = '<option value="">Memuat…</option>';
+    openModal('modalOperator');
+
+    $.get('{{ route('admin.users.operator.prepare') }}').done(function (res) {
+        _opItems = {};
+        var noOp = 0, items = res.items || [];
+        var html = '<option value="">— Pilih perangkat daerah —</option>';
+        items.forEach(function (it) {
+            _opItems[it.id] = it;
+            if (!it.has_operator) noOp++;
+            html += '<option value="' + it.id + '">' + _opEsc(it.nama) + (it.has_operator ? ' — sudah ada operator' : '') + '</option>';
+        });
+        sel.innerHTML = html;
+        document.getElementById('opHint').textContent = noOp + ' dari ' + items.length + ' perangkat daerah belum punya operator.';
+    }).fail(function () { sel.innerHTML = '<option value="">Gagal memuat data</option>'; });
+}
+
+function opPdChanged() {
+    var id = document.getElementById('opPd').value;
+    var w  = document.getElementById('opPdWarning');
+    document.getElementById('opAllowDup').checked = false;
+    if (!id || !_opItems[id]) { w.classList.add('hidden'); return; }
+    var it = _opItems[id];
+    document.getElementById('opName').value  = it.nama;
+    document.getElementById('opEmail').value = it.suggested_email;
+    if (it.has_operator) {
+        document.getElementById('opPdWarningText').innerHTML =
+            'PD ini sudah punya operator (<strong>' + _opEsc(it.operator_name) + '</strong>). Centang untuk tetap membuat operator kedua.';
+        w.classList.remove('hidden');
+    } else { w.classList.add('hidden'); }
+}
+
+function opGenPassword() { document.getElementById('opPassword').value = opStrongPassword(); }
+
+function opCopyText(t) {
+    navigator.clipboard.writeText(t).then(function () { showToast('Disalin ke clipboard', 'success'); })
+        .catch(function () { showToast('Gagal menyalin', 'error'); });
+}
+function opCopy(id) { opCopyText(document.getElementById(id).value); }
+function opCopyAll() {
+    var t = 'Perangkat Daerah: ' + document.getElementById('credPd').textContent
+          + '\nEmail: ' + document.getElementById('credEmail').textContent
+          + '\nPassword: ' + document.getElementById('credPass').textContent;
+    opCopyText(t);
+}
+
+function submitOperator() {
+    var pd = document.getElementById('opPd').value;
+    var name = document.getElementById('opName').value.trim();
+    var email = document.getElementById('opEmail').value.trim();
+    var pass = document.getElementById('opPassword').value;
+    var allowDup = document.getElementById('opAllowDup').checked;
+    var errBox = document.getElementById('opError');
+    function err(m) { errBox.textContent = m; errBox.classList.remove('hidden'); }
+    errBox.classList.add('hidden');
+
+    if (!pd) return err('Pilih perangkat daerah dulu.');
+    if (name.length < 3) return err('Nama operator minimal 3 karakter.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return err('Format email tidak valid.');
+    if (pass.length < 10) return err('Password minimal 10 karakter.');
+
+    var btn = document.getElementById('opSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses...';
+
+    $.ajax({
+        url: '/admin/users/operator', method: 'POST',
+        data: { _token: '{{ csrf_token() }}', perangkat_daerah_id: pd, name: name, email: email, password: pass, allow_duplicate: allowDup ? 1 : 0 },
+    }).done(function (res) {
+        var c = res.credentials || {};
+        document.getElementById('credPd').textContent    = c.perangkat_daerah || '—';
+        document.getElementById('credEmail').textContent = c.email;
+        document.getElementById('credPass').textContent  = c.password;
+        document.getElementById('opForm').style.display = 'none';
+        document.getElementById('opSuccess').classList.remove('hidden');
+        showToast(res.message, 'success');
+    }).fail(function (xhr) {
+        var j = xhr.responseJSON || {};
+        if (xhr.status === 409 && j.needs_confirm) {
+            var w = document.getElementById('opPdWarning');
+            document.getElementById('opPdWarningText').innerHTML = _opEsc(_opItems[pd] && _opItems[pd].operator_name ? 'PD ini sudah punya operator (' + _opItems[pd].operator_name + ').' : 'PD ini sudah punya operator.') + ' Centang untuk tetap membuat operator kedua.';
+            w.classList.remove('hidden');
+            err('Perangkat daerah sudah punya operator — centang persetujuan lalu klik Buat Operator lagi.');
+        } else {
+            err(j.message || (j.errors ? Object.values(j.errors).flat().join(' ') : 'Gagal membuat operator.'));
+        }
+    }).always(function () {
+        btn.disabled = false; btn.innerHTML = '<i class="fas fa-user-plus"></i> Buat Operator';
+    });
 }
 
 // ── Password toggle ────────────────────────────────────────────────────

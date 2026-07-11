@@ -82,6 +82,13 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     });
 
     // --------------------------------------------------
+    // TAMBAH HIRARKI MANUAL (Program → Kegiatan → Sub Kegiatan)
+    // Wizard untuk Operator Daerah — terkunci ke PD mereka sendiri.
+    // --------------------------------------------------
+    Route::post('/hierarki', [OppkpkeController::class, 'hierarchyStore'])
+        ->middleware('throttle:30,1')->name('hierarki.store');
+
+    // --------------------------------------------------
     // IMPORT DATA — OPPKPKE 21 kolom
     // --------------------------------------------------
     Route::get('/import', [OppkpkeController::class, 'importPage'])->name('import');
@@ -179,10 +186,22 @@ Route::prefix('admin/sessions')->name('admin.sessions.')->middleware(['auth', 'r
     Route::post('/force-logout', [SessionController::class, 'forceLogout'])->middleware('throttle:30,1')->name('force-logout');
 });
 
+// =====================================================
+// PERANGKAT DAERAH — deteksi & merge duplikat (Tim IT & Master)
+// =====================================================
+
+Route::prefix('admin/perangkat-daerah')->name('admin.perangkat-daerah.')->middleware(['auth', 'role:it_team,master'])->group(function () {
+    Route::get('/',      [\App\Http\Controllers\PerangkatDaerahController::class, 'index'])->name('index');
+    Route::post('/merge', [\App\Http\Controllers\PerangkatDaerahController::class, 'merge'])->middleware('throttle:20,1')->name('merge');
+});
+
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {
     Route::get('/',                                    [UserController::class, 'index'])->name('index');
     Route::get('/export/pdf',                          [UserController::class, 'exportPdf'])->name('export-pdf');
     Route::post('/',                                   [UserController::class, 'store'])->name('store');
+    // Alur khusus "Tambah Operator Daerah" (terpandu + kredensial sekali tampil).
+    Route::get('/operator/prepare',                    [UserController::class, 'operatorPrepare'])->name('operator.prepare');
+    Route::post('/operator',                           [UserController::class, 'storeOperator'])->middleware('throttle:30,1')->name('operator.store');
     Route::get('/generate-credentials/preview',        [UserController::class, 'generateCredentialsPreview'])->name('generate-credentials.preview');
     Route::post('/generate-credentials',               [UserController::class, 'generateCredentials'])->name('generate-credentials');
     Route::get('/{user}',                              [UserController::class, 'show'])->name('show');

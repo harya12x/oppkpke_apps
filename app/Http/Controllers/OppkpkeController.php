@@ -432,6 +432,214 @@ class OppkpkeController extends Controller
         return response()->json($data);
     }
 
+    /**
+     * Wizard manual: buat hirarki (Program → Kegiatan → Sub Kegiatan) yang belum
+     * ada, untuk diisi laporannya. Role-aware:
+     *  • Operator Daerah → SELALU terkunci ke perangkat daerah miliknya; tidak
+     *    bisa membuat PD baru maupun menyentuh PD lain.
+     *  • Admin Master / Tim IT → memilih perangkat daerah tujuan (PD mana pun) atau
+     *    membuat PD baru sekalian; bisa membangun rantai dari nol.
+     * Anti-duplikat & transaksional.
+     */
+    public function hierarchyStore(Request $request)
+    {
+        $user    = auth()->user();
+        $isAdmin = $user->isMaster() || $user->isItTeam();
+
+        // Operator daerah wajib terhubung ke sebuah perangkat daerah.
+        if (!$isAdmin && !$user->perangkat_daerah_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akun Anda tidak terhubung ke perangkat daerah, sehingga tidak dapat menambah kegiatan.',
+            ], 403);
+        }
+
+        $rules = [
+            'program_mode'      => 'required|in:existing,new',
+            'program_id'        => 'required_if:program_mode,existing|nullable|integer',
+            'strategi_id'       => 'required_if:program_mode,new|nullable|integer|exists:strategi_oppkpke,id',
+            'kode_program'      => 'required_if:program_mode,new|nullable|string|max:50',
+            'nama_program'      => 'required_if:program_mode,new|nullable|string|max:500',
+            'kegiatan_mode'     => 'required|in:existing,new',
+            'kegiatan_id'       => 'required_if:kegiatan_mode,existing|nullable|integer',
+            'kode_kegiatan'     => 'nullable|string|max:100',
+            'nama_kegiatan'     => 'required_if:kegiatan_mode,new|nullable|string|max:500',
+            'kode_sub'          => 'nullable|string|max:100',
+            'nama_sub_kegiatan' => 'required|string|max:500',
+        ];
+        $messages = [
+            'strategi_id.required_if'    => 'Pilih strategi untuk program baru.',
+            'kode_program.required_if'   => 'Kode program wajib diisi untuk program baru.',
+            'nama_program.required_if'   => 'Nama program wajib diisi untuk program baru.',
+            'nama_kegiatan.required_if'  => 'Nama kegiatan wajib diisi untuk kegiatan baru.',
+            'nama_sub_kegiatan.required' => 'Nama sub kegiatan wajib diisi.',
+        ];
+
+        // Admin: langkah tambahan — tentukan perangkat daerah tujuan.
+        if ($isAdmin) {
+            $rules['pd_mode']              = 'required|in:existing,new';
+            $rules['perangkat_daerah_id']  = 'required_if:pd_mode,existing|nullable|integer|exists:perangkat_daerah,id';
+            $rules['pd_nama']              = 'required_if:pd_mode,new|nullable|string|max:255';
+            $rules['pd_singkatan']         = 'nullable|string|max:50';
+            $rules['pd_jenis']             = 'nullable|string|max:50';
+            $messages['perangkat_daerah_id.required_if'] = 'Pilih perangkat daerah tujuan.';
+            $messages['pd_nama.required_if']             = 'Nama perangkat daerah wajib diisi.';
+        }
+
+        $validated = $request->validate($rules, $messages);
+
+        // Program baru ⇒ kegiatannya pasti baru juga (tak mungkin ada kegiatan lama
+        // di bawah program yang belum dibuat).
+        $programMode  = $validated['program_mode'];
+        $kegiatanMode = $programMode === 'new' ? 'new' : $validated['kegiatan_mode'];
+
+        // Normalisasi nama untuk deteksi duplikat (buang tanda baca/spasi ganda).
+        $normalize = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+
+        try {
+            $r = DB::transaction(function () use ($validated, $programMode, $kegiatanMode, $normalize, $user, $isAdmin) {
+                $createdProgram = $createdKegiatan = $createdPd = false;
+
+                // ── PERANGKAT DAERAH ─────────────────────────────────────
+                if (!$isAdmin) {
+                    // Operator: terkunci ke PD sendiri.
+                    $pdId = $user->perangkat_daerah_id;
+                    $pdNama = optional($user->perangkatDaerah)->nama ?? ('PD #' . $pdId);
+                } elseif ($validated['pd_mode'] === 'existing') {
+                    $pd = PerangkatDaerah::where('id', $validated['perangkat_daerah_id'])
+                        ->where('is_active', true)
+                        ->lockForUpdate()
+                        ->first();
+                    abort_unless($pd, 422, 'Perangkat daerah tujuan tidak ditemukan atau non-aktif.');
+                    $pdId = $pd->id;
+                    $pdNama = $pd->nama;
+                } else {
+                    $namaPd = trim($validated['pd_nama']);
+                    $dupePd = PerangkatDaerah::all()->first(fn ($p) => $normalize($p->nama) === $normalize($namaPd));
+                    if ($dupePd) {
+                        abort(422, 'Perangkat daerah serupa sudah ada: "' . $dupePd->nama . '". Gunakan pilihan "PD yang sudah ada".');
+                    }
+                    $pd = PerangkatDaerah::create([
+                        'nama'      => $namaPd,
+                        'singkatan' => ($validated['pd_singkatan'] ?? null) ?: null,
+                        'jenis'     => ($validated['pd_jenis'] ?? null) ?: null,
+                        'is_active' => true,
+                    ]);
+                    $pdId = $pd->id;
+                    $pdNama = $pd->nama;
+                    $createdPd = true;
+                    AuditLog::record('perangkat_daerah.created', 'Menambah perangkat daerah "' . $namaPd . '"', $pd);
+                }
+
+                // ── PROGRAM ──────────────────────────────────────────────
+                if ($programMode === 'existing') {
+                    // Kunci kepemilikan: program HARUS milik PD tujuan.
+                    $program = Program::where('id', $validated['program_id'])
+                        ->where('perangkat_daerah_id', $pdId)
+                        ->lockForUpdate()
+                        ->first();
+                    abort_unless($program, 422, 'Program yang dipilih tidak ditemukan pada perangkat daerah tujuan.');
+                } else {
+                    $namaProg = trim($validated['nama_program']);
+                    $kodeProg = trim($validated['kode_program']);
+                    $dupe = Program::where('perangkat_daerah_id', $pdId)->get()->first(fn ($p) =>
+                        ($kodeProg !== '' && strcasecmp(trim($p->kode_program), $kodeProg) === 0) ||
+                        $normalize($p->nama_program) === $normalize($namaProg)
+                    );
+                    if ($dupe) {
+                        abort(422, 'Program serupa sudah ada: "' . $dupe->nama_program . '". Gunakan pilihan "program yang sudah ada".');
+                    }
+                    $program = Program::create([
+                        'strategi_id'         => $validated['strategi_id'],
+                        'perangkat_daerah_id' => $pdId,
+                        'kode_program'        => $kodeProg,
+                        'nama_program'        => $namaProg,
+                        'is_active'           => true,
+                    ]);
+                    $createdProgram = true;
+                }
+
+                // ── KEGIATAN ─────────────────────────────────────────────
+                if ($kegiatanMode === 'existing') {
+                    $kegiatan = Kegiatan::where('id', $validated['kegiatan_id'])
+                        ->where('program_id', $program->id)
+                        ->first();
+                    abort_unless($kegiatan, 422, 'Kegiatan yang dipilih tidak berada di bawah program tersebut.');
+                } else {
+                    $namaKeg = trim($validated['nama_kegiatan']);
+                    $dupeKeg = Kegiatan::where('program_id', $program->id)->get()->first(fn ($k) =>
+                        $normalize($k->nama_kegiatan) === $normalize($namaKeg)
+                    );
+                    if ($dupeKeg) {
+                        abort(422, 'Kegiatan serupa sudah ada: "' . $dupeKeg->nama_kegiatan . '". Gunakan pilihan "kegiatan yang sudah ada".');
+                    }
+                    $kegiatan = Kegiatan::create([
+                        'program_id'    => $program->id,
+                        'kode'          => ($validated['kode_kegiatan'] ?? null) ?: null,
+                        'nama_kegiatan' => $namaKeg,
+                        'is_active'     => true,
+                    ]);
+                    $createdKegiatan = true;
+                }
+
+                // ── SUB KEGIATAN (selalu baru) ───────────────────────────
+                $namaSub = trim($validated['nama_sub_kegiatan']);
+                $dupeSub = SubKegiatan::where('kegiatan_id', $kegiatan->id)->get()->first(fn ($s) =>
+                    $normalize($s->nama_sub_kegiatan) === $normalize($namaSub)
+                );
+                if ($dupeSub) {
+                    abort(422, 'Sub kegiatan "' . $dupeSub->nama_sub_kegiatan . '" sudah ada di kegiatan ini.');
+                }
+                $sub = SubKegiatan::create([
+                    'kegiatan_id'       => $kegiatan->id,
+                    'kode'              => ($validated['kode_sub'] ?? null) ?: null,
+                    'nama_sub_kegiatan' => $namaSub,
+                    'is_active'         => true,
+                ]);
+
+                AuditLog::record(
+                    'sub_kegiatan.created',
+                    'Menambah sub kegiatan "' . $namaSub . '"',
+                    $sub,
+                    [
+                        'perangkat_daerah_id' => $pdId,
+                        'perangkat_daerah'    => $pdNama,
+                        'perangkat_daerah_baru' => $createdPd,
+                        'program'             => $program->nama_program,
+                        'program_baru'        => $createdProgram,
+                        'kegiatan'            => $kegiatan->nama_kegiatan,
+                        'kegiatan_baru'       => $createdKegiatan,
+                        'sub_kegiatan'        => $namaSub,
+                    ]
+                );
+
+                return compact('program', 'kegiatan', 'sub', 'createdProgram', 'createdKegiatan', 'createdPd', 'pdNama');
+            });
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            // abort(...) di dalam transaksi → rollback otomatis, pesan ramah ke klien.
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getStatusCode() ?: 422);
+        } catch (QueryException $e) {
+            report($e);
+            return response()->json(['success' => false, 'message' => 'Gagal menyimpan. Kemungkinan data serupa sudah ada.'], 422);
+        }
+
+        $parts = [];
+        if ($r['createdPd'])       $parts[] = 'Perangkat Daerah';
+        if ($r['createdProgram'])  $parts[] = 'Program';
+        if ($r['createdKegiatan']) $parts[] = 'Kegiatan';
+        $parts[] = 'Sub Kegiatan';
+
+        return response()->json([
+            'success'      => true,
+            'message'      => implode(', ', $parts) . ' berhasil ditambahkan untuk ' . $r['pdNama'] . '.',
+            'sub_kegiatan' => [
+                'id'   => $r['sub']->id,
+                'nama' => $r['sub']->nama_sub_kegiatan,
+                'path' => $r['pdNama'] . ' → ' . $r['program']->nama_program . ' → ' . $r['kegiatan']->nama_kegiatan . ' → ' . $r['sub']->nama_sub_kegiatan,
+            ],
+        ]);
+    }
+
     // =========================================
     // IMPORT
     // =========================================

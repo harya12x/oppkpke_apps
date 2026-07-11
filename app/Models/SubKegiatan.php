@@ -13,6 +13,7 @@ class SubKegiatan extends Model
     
     protected $fillable = [
         'kegiatan_id',
+        'kode',
         'nama_sub_kegiatan',
         'is_active',
     ];
