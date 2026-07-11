@@ -1165,9 +1165,9 @@ class OppkpkeController extends Controller
                 return [null, $v];
             };
 
-            [$skKodeFromG, $colG] = $stripKodePrefix($colG);
-            [, $colF] = $stripKodePrefix($colF);
-            [, $colE] = $stripKodePrefix($colE);
+            [$skKodeFromG,   $colG] = $stripKodePrefix($colG);
+            [$kegKodeFromF,  $colF] = $stripKodePrefix($colF);
+            [$progKodeFromE, $colE] = $stripKodePrefix($colE);
 
             // Inherit hierarchical context from filled columns
             if ($colB !== '' && stripos($colB, 'strategi') === false) $currentStrategi = $colB;
@@ -1176,16 +1176,23 @@ class OppkpkeController extends Controller
             if ($colE !== '') $currentProgram  = $colE;
             if ($colF !== '') $currentKegiatan = $colF;
 
-            // Kode PROGRAM diambil dari kolom D (bukan dari prefix nama sub) agar
-            // pencocokan/pembuatan program benar. Kode SUB KEGIATAN diambil dari
-            // prefix nama di kolom G lalu disimpan ke sub_kegiatan.kode.
+            // Kode sub kegiatan Permendagri (mis. "1.02.02.2.01.0014") memuat kode
+            // program (3 segmen pertama) & kegiatan (5 segmen). Turunkan agar tiap
+            // level punya kodenya sendiri — tidak menyamakan kode sub = kode program.
+            [$derivProg, $derivKeg] = $this->deriveHierarchyCodes($skKodeFromG);
+
+            $kodeProgram  = $currentKode !== '' ? $currentKode : ($progKodeFromE ?: ($derivProg ?? ''));
+            $kodeKegiatan = $kegKodeFromF ?: ($derivKeg ?? '');
+            $kodeSub      = $skKodeFromG ?? '';
+
             $alokasi = $this->parseCellNumber($sheet->getCell('K' . $r)->getValue(), $colK);
 
             $rows[] = [
                 'strategi'                 => $currentStrategi,
                 'perangkat_daerah'         => $currentPd,
-                'kode'                     => $currentKode,          // kode PROGRAM (kolom D)
-                'kode_sub'                 => $skKodeFromG ?? '',    // kode SUB KEGIATAN (prefix kolom G)
+                'kode'                     => $kodeProgram,          // kode PROGRAM (kolom D / turunan)
+                'kode_kegiatan'            => $kodeKegiatan,         // kode KEGIATAN (turunan/prefix F)
+                'kode_sub'                 => $kodeSub,              // kode SUB KEGIATAN (prefix kolom G)
                 'program'                  => $currentProgram,
                 'kegiatan'                 => $currentKegiatan,
                 'sub_kegiatan'             => $colG,
@@ -1539,6 +1546,24 @@ class OppkpkeController extends Controller
         }
 
         return $result;
+    }
+
+    /**
+     * Turunkan kode program & kegiatan dari kode sub kegiatan (format Permendagri).
+     * "1.02.02.2.01.0014" → program "1.02.02" (3 segmen), kegiatan "1.02.02.2.01" (5).
+     *
+     * @return array{0: ?string, 1: ?string}  [kodeProgram, kodeKegiatan]
+     */
+    private function deriveHierarchyCodes(?string $fullSubCode): array
+    {
+        if (! $fullSubCode) {
+            return [null, null];
+        }
+        $p = explode('.', trim($fullSubCode));
+        $prog = count($p) >= 3 ? implode('.', array_slice($p, 0, 3)) : null;
+        $keg  = count($p) >= 5 ? implode('.', array_slice($p, 0, 5)) : null;
+
+        return [$prog, $keg];
     }
 
     private function normalizeSkName(string $name): string

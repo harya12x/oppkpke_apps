@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('menu_settings')) {
+            return;
+        }
+
         Schema::create('menu_settings', function (Blueprint $table) {
             $table->id();
             $table->string('role', 20);        // master | daerah

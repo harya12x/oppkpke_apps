@@ -371,6 +371,10 @@ class OppkpkeService
             $skippedDup     = 0;
             $skippedAmbig   = 0;
             $processedSkIds = [];
+            // Cache in-memory PD/Program/Kegiatan yang sudah di-resolve dalam batch ini
+            // → banyak sub kegiatan dari 1 operator/program tidak query & buat berulang
+            // (bukan "insert 1-1"); entitas yang sama dipakai ulang.
+            $hierCache = ['pd' => [], 'prog' => [], 'keg' => []];
 
             foreach ($cached['rows'] as $row) {
                 $rowNumStr = (string) $row['row_num'];
@@ -392,7 +396,7 @@ class OppkpkeService
                 }
 
                 if ($row['status'] === 'not_found') {
-                    $skId = $this->forceCreateSkFromRow($row, $userId, $createdHier, $createdPd);
+                    $skId = $this->forceCreateSkFromRow($row, $userId, $createdHier, $createdPd, $hierCache);
                     if (!$skId) { $skipped++; continue; }
                 }
 
@@ -464,10 +468,11 @@ class OppkpkeService
         });
     }
 
-    // Dipindah dari OppkpkeController — helper khusus import RAT untuk
-    // membangun hierarki (perangkat daerah → program → kegiatan → sub kegiatan)
-    // secara otomatis dari kolom file saat baris tidak cocok dengan data yang ada.
-    private function forceCreateSkFromRow(array $row, int $userId, int &$created, int &$createdPd = 0): ?int
+    // Membangun hierarki (perangkat daerah → program → kegiatan → sub kegiatan)
+    // otomatis dari kolom file saat baris tidak cocok dengan data yang ada.
+    // Memakai kode berjenjang (program/kegiatan/sub) & cache in-memory ($cache)
+    // agar banyak sub dari satu operator/program tidak dibuat/di-query berulang.
+    private function forceCreateSkFromRow(array $row, int $userId, int &$created, int &$createdPd, array &$cache): ?int
     {
         $pdName   = trim($row['perangkat_daerah'] ?? '');
         $progName = trim($row['program'] ?? '');
@@ -476,82 +481,94 @@ class OppkpkeService
 
         if (!$pdName || !$skName) return null;
 
-        // Normalisasi nama untuk pencocokan: buang SEMUA non-alfanumerik (koma, titik,
-        // newline, dsb) jadi spasi lalu rapatkan. Tanpa ini, nama dari file yang cuma
-        // beda tanda baca — mis. "Dinas ... Perempuan, Perlindungan Anak, ..." vs
-        // "Dinas ... Perempuan Perlindungan Anak ..." — dianggap beda → perangkat
-        // daerah (dan operatornya) terduplikasi.
         $normalize = fn(string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
-        $pd = PerangkatDaerah::all()->first(fn($p) =>
-            $normalize($p->nama) === $normalize($pdName) ||
-            str_contains($normalize($p->nama), $normalize($pdName)) ||
-            str_contains($normalize($pdName), $normalize($p->nama))
-        );
-        if (!$pd) {
-            $pd = PerangkatDaerah::create([
-                'nama'      => $pdName,
-                'is_active' => true,
-            ]);
-            $createdPd++;
+
+        $kodeProg = trim((string) ($row['kode'] ?? ''));
+        $kodeKeg  = trim((string) ($row['kode_kegiatan'] ?? ''));
+        $kodeSub  = trim((string) ($row['kode_sub'] ?? ''));
+
+        // ── PERANGKAT DAERAH (cache) ───────────────────────────────────
+        $pdKey = $normalize($pdName);
+        if (isset($cache['pd'][$pdKey])) {
+            $pd = $cache['pd'][$pdKey];
+        } else {
+            $pd = PerangkatDaerah::all()->first(fn($p) =>
+                $normalize($p->nama) === $pdKey ||
+                str_contains($normalize($p->nama), $pdKey) ||
+                str_contains($pdKey, $normalize($p->nama))
+            );
+            if (!$pd) {
+                $pd = PerangkatDaerah::create(['nama' => $pdName, 'is_active' => true]);
+                $createdPd++;
+            }
+            $cache['pd'][$pdKey] = $pd;
         }
 
-        $prog = null;
-        if ($progName) {
-            $prog = Program::where('perangkat_daerah_id', $pd->id)->get()->first(fn($p) =>
-                $normalize($p->nama_program) === $normalize($progName) ||
-                str_contains($normalize($p->nama_program), $normalize($progName)) ||
-                str_contains($normalize($progName), $normalize($p->nama_program))
-            );
-            if (!$prog && !empty($row['kode'])) {
-                $prog = Program::where('perangkat_daerah_id', $pd->id)
-                    ->where('kode_program', $row['kode'])
-                    ->first();
+        // ── PROGRAM (cache by pd + kode/nama) ──────────────────────────
+        $progCacheKey = $pd->id . '|' . ($kodeProg !== '' ? 'K:' . strtolower($kodeProg) : 'N:' . $normalize($progName));
+        if (isset($cache['prog'][$progCacheKey])) {
+            $prog = $cache['prog'][$progCacheKey];
+        } else {
+            $prog = null;
+            if ($kodeProg !== '' || $progName !== '') {
+                $prog = Program::where('perangkat_daerah_id', $pd->id)->get()->first(fn($p) =>
+                    ($kodeProg !== '' && strcasecmp(trim($p->kode_program), $kodeProg) === 0) ||
+                    ($progName !== '' && (
+                        $normalize($p->nama_program) === $normalize($progName) ||
+                        str_contains($normalize($p->nama_program), $normalize($progName)) ||
+                        str_contains($normalize($progName), $normalize($p->nama_program))
+                    ))
+                );
             }
             if (!$prog) {
-                // Program HARUS dibuat baru → butuh strategi yang valid dari file.
-                // Tidak ada fallback diam-diam ke strategi pertama: bila tak dikenali,
-                // batalkan baris ini (return null) agar tak salah menempatkan strategi.
+                // Program baru wajib strategi valid — tanpa fallback diam-diam.
                 $strategi = StrategiOppkpke::resolveFromText($row['strategi'] ?? '');
                 if (!$strategi) {
                     return null;
                 }
                 $prog = Program::firstOrCreate(
-                    [
-                        'strategi_id'         => $strategi->id,
-                        'perangkat_daerah_id' => $pd->id,
-                        'kode_program'        => $row['kode'] ?? '',
-                    ],
-                    [
-                        'nama_program' => $progName,
-                        'is_active'    => true,
-                    ]
+                    ['strategi_id' => $strategi->id, 'perangkat_daerah_id' => $pd->id, 'kode_program' => $kodeProg],
+                    ['nama_program' => ($progName !== '' ? $progName : 'Program (belum diisi)'), 'is_active' => true]
                 );
             }
+            // Lengkapi kode program bila kosong.
+            if ($kodeProg !== '' && trim((string) $prog->kode_program) === '') {
+                $prog->kode_program = $kodeProg;
+                $prog->save();
+            }
+            $cache['prog'][$progCacheKey] = $prog;
         }
 
-        if (!$prog) {
-            $prog = Program::where('perangkat_daerah_id', $pd->id)->first();
+        // ── KEGIATAN (cache by program + nama) ─────────────────────────
+        $kegCacheKey = $prog->id . '|' . $normalize($kegName ?: ('kegiatan ' . $skName));
+        if (isset($cache['keg'][$kegCacheKey])) {
+            $keg = $cache['keg'][$kegCacheKey];
+        } else {
+            $keg = null;
+            if ($kegName !== '') {
+                $keg = Kegiatan::where('program_id', $prog->id)->get()->first(fn($k) =>
+                    $normalize($k->nama_kegiatan) === $normalize($kegName) ||
+                    str_contains($normalize($k->nama_kegiatan), $normalize($kegName)) ||
+                    str_contains($normalize($kegName), $normalize($k->nama_kegiatan))
+                );
+            }
+            if (!$keg) {
+                $keg = Kegiatan::firstOrCreate(
+                    ['program_id' => $prog->id, 'nama_kegiatan' => $kegName ?: 'Kegiatan ' . $skName],
+                    ['is_active' => true, 'kode' => ($kodeKeg !== '' ? $kodeKeg : null)]
+                );
+            }
+            if ($kodeKeg !== '' && trim((string) $keg->kode) === '') {
+                $keg->kode = $kodeKeg;
+                $keg->save();
+            }
+            $cache['keg'][$kegCacheKey] = $keg;
         }
-        if (!$prog) return null;
 
-        $keg = null;
-        if ($kegName) {
-            $keg = Kegiatan::where('program_id', $prog->id)->get()->first(fn($k) =>
-                $normalize($k->nama_kegiatan) === $normalize($kegName) ||
-                str_contains($normalize($k->nama_kegiatan), $normalize($kegName)) ||
-                str_contains($normalize($kegName), $normalize($k->nama_kegiatan))
-            );
-        }
-        if (!$keg) {
-            $keg = Kegiatan::firstOrCreate(
-                ['program_id' => $prog->id, 'nama_kegiatan' => $kegName ?: 'Kegiatan ' . $skName],
-                ['is_active' => true]
-            );
-        }
-
+        // ── SUB KEGIATAN ───────────────────────────────────────────────
         $sk = SubKegiatan::firstOrCreate(
             ['kegiatan_id' => $keg->id, 'nama_sub_kegiatan' => $skName],
-            ['is_active' => true]
+            ['is_active' => true, 'kode' => ($kodeSub !== '' ? $kodeSub : null)]
         );
 
         if ($sk->wasRecentlyCreated) $created++;

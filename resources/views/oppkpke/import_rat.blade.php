@@ -249,10 +249,11 @@
         <p class="text-[10px] text-purple-400">sub kegiatan otomatis</p>
     </div>
     @endif
-    <div class="bg-white rounded-xl border border-red-200 p-3 shadow-sm">
-        <p class="text-xs text-red-600 font-medium">Tidak Cocok</p>
-        <p class="text-2xl font-bold text-red-500">{{ $stats['not_found'] }}</p>
-        <p class="text-[10px] text-red-400">dibuat otomatis</p>
+    @php $newDataCount = $stats['not_found'] - ($stats['strategi_warn'] ?? 0); @endphp
+    <div class="bg-white rounded-xl border border-teal-200 p-3 shadow-sm">
+        <p class="text-xs text-teal-600 font-medium">Data Baru</p>
+        <p class="text-2xl font-bold text-teal-600">{{ max(0, $newDataCount) }}</p>
+        <p class="text-[10px] text-teal-500">akan dibuat otomatis</p>
     </div>
     @if(($stats['duplicate'] ?? 0) > 0)
     <div class="bg-white rounded-xl border border-orange-200 p-3 shadow-sm">
@@ -292,14 +293,14 @@
 </div>
 @endif
 
-@if($stats['not_found'] > 0)
-<div class="flex items-start gap-3 bg-blue-50 border border-blue-300 rounded-xl p-3 mb-4 text-sm">
-    <i class="fas fa-circle-info text-blue-500 mt-0.5 flex-shrink-0"></i>
+@php $newDataInfo = $stats['not_found'] - ($stats['strategi_warn'] ?? 0); @endphp
+@if($newDataInfo > 0)
+<div class="flex items-start gap-3 bg-teal-50 border border-teal-300 rounded-xl p-3 mb-4 text-sm">
+    <i class="fas fa-plus text-teal-500 mt-0.5 flex-shrink-0"></i>
     <div>
-        <p class="font-semibold text-blue-800">{{ $stats['not_found'] }} baris tidak cocok — akan dibuat otomatis sebagai Sub Kegiatan baru</p>
-        <p class="text-blue-700 text-xs mt-0.5">
-            Semua baris <span class="bg-red-100 text-red-700 rounded px-1.5 py-0.5 font-semibold">Tidak Cocok</span> sudah dicentang dan akan dibuatkan Sub Kegiatan, Kegiatan, dan Program baru secara otomatis saat import dikonfirmasi.
-            Anda tetap bisa uncheck baris tertentu jika tidak ingin diimport.
+        <p class="font-semibold text-teal-800">{{ $newDataInfo }} baris <strong>DATA BARU</strong> — akan dibuat otomatis (bukan ditolak)</p>
+        <p class="text-teal-700 text-xs mt-0.5">
+            Baris bertanda <span class="bg-teal-100 text-teal-700 rounded px-1.5 py-0.5 font-semibold">Data Baru</span> belum ada di database. Saat import dikonfirmasi, sistem membuatnya lengkap — <strong>Perangkat Daerah, Program, Kegiatan, dan Sub Kegiatan</strong> beserta kodenya (dibuat sekali, lalu dipakai ulang untuk sub berikutnya di operator/program yang sama). Baris sudah tercentang; uncheck bila tak ingin diimport.
         </p>
     </div>
 </div>
@@ -359,7 +360,7 @@
         <button type="button" data-f="all" onclick="ratSetFilter('all')" class="rat-chip rat-chip-active">Semua</button>
         <button type="button" data-f="matched" onclick="ratSetFilter('matched')" class="rat-chip">Cocok</button>
         @if(($stats['new_sk'] ?? 0) > 0)<button type="button" data-f="new_sk" onclick="ratSetFilter('new_sk')" class="rat-chip">Buat SK</button>@endif
-        <button type="button" data-f="not_found" onclick="ratSetFilter('not_found')" class="rat-chip">Tidak Cocok</button>
+        <button type="button" data-f="not_found" onclick="ratSetFilter('not_found')" class="rat-chip">Data Baru</button>
         @if(($stats['ambiguous'] ?? 0) > 0)<button type="button" data-f="ambiguous" onclick="ratSetFilter('ambiguous')" class="rat-chip">Ambigu</button>@endif
         @if(($stats['duplicate'] ?? 0) > 0)<button type="button" data-f="duplicate" onclick="ratSetFilter('duplicate')" class="rat-chip">Duplikat</button>@endif
     </div>
@@ -411,13 +412,14 @@
                 $canImport   = $isMatched || $isNewSk || ($isNotFound && !$strategiWarn);
                 $isUpdate    = $isMatched && $row['has_existing'];
                 if ($canImport) { $totAlokasi += $row['alokasi_anggaran']; $checkedCount++; }
-                $bg = match($status) {
-                    'matched'   => $isUpdate ? '#FFFBEB' : '#F0FDF4',
-                    'new_sk'    => '#FAF5FF',
-                    'not_found' => '#FFF1F2',
-                    'duplicate' => '#FFF7ED',
-                    'ambiguous' => '#FEFCE8',
-                    default     => '#fff',
+                $bg = match(true) {
+                    $status === 'matched'   => $isUpdate ? '#FFFBEB' : '#F0FDF4',
+                    $status === 'new_sk'    => '#FAF5FF',
+                    $strategiWarn           => '#FFF1F2',          // not_found + strategi tak dikenali → merah
+                    $status === 'not_found' => '#F0FDFA',          // akan dibuat → teal lembut (bukan error)
+                    $status === 'duplicate' => '#FFF7ED',
+                    $status === 'ambiguous' => '#FEFCE8',
+                    default                 => '#fff',
                 };
                 $rowSearch = strtolower(trim(($row['sub_kegiatan'] ?? '') . ' ' . ($row['matched_pd_nama'] ?? $row['perangkat_daerah'] ?? '')));
             @endphp
@@ -451,9 +453,13 @@
                         <span class="inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Ada beberapa sub kegiatan bernama sama di PD ini — sistem tidak menebak. Perbaiki kode/nama di file.">
                             <i class="fas fa-circle-question text-[9px]"></i> Ambigu
                         </span>
+                    @elseif($strategiWarn)
+                        <span class="inline-flex items-center gap-1 bg-red-100 text-red-700 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Strategi tak dikenali & program harus dibuat baru — dilewati.">
+                            <i class="fas fa-triangle-exclamation text-[9px]"></i> Dilewati
+                        </span>
                     @else
-                        <span class="inline-flex items-center gap-0.5 bg-red-100 text-red-700 text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                            <i class="fas fa-xmark text-[9px]"></i> Tidak Cocok
+                        <span class="inline-flex items-center gap-1 bg-teal-100 text-teal-700 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Sub kegiatan belum ada di database — akan DIBUAT baru (beserta program/kegiatan/PD bila perlu) saat import.">
+                            <i class="fas fa-plus text-[9px]"></i> Data Baru
                         </span>
                     @endif
                 </td>
@@ -471,6 +477,8 @@
                         @if(!empty($row['strategi']))<p class="text-[10px] text-gray-400 mt-0.5">file: {{ $row['strategi'] }}</p>@endif
                     @elseif($stratShow)
                         <span class="text-gray-700">{{ $stratShow }}</span>
+                    @elseif(!empty($row['strategi']))
+                        <span class="text-gray-400" title="Nilai dari file (belum terpetakan ke strategi baku)">{{ $row['strategi'] }}</span>
                     @else
                         <span class="text-gray-300">—</span>
                     @endif
@@ -487,7 +495,6 @@
                 </td>
                 <td class="border border-gray-200 px-2 py-2 leading-snug
                     @if($isMatched || $isNewSk) text-green-800 font-medium
-                    @elseif($isNotFound) text-red-400 italic
                     @elseif($isDuplicate) text-orange-600
                     @endif">
                     @if($isNewSk)
@@ -496,8 +503,12 @@
                         {{ $row['matched_sk_nama'] ?? '—' }}
                     @elseif($isAmbiguous)
                         <span class="text-yellow-700 italic"><i class="fas fa-circle-question text-[9px] mr-0.5"></i> Beberapa sub bernama sama — tak diimport (perbaiki kode/nama di file)</span>
+                    @elseif($strategiWarn)
+                        <span class="text-red-500 italic"><i class="fas fa-triangle-exclamation text-[9px] mr-0.5"></i> Dilewati — strategi tak dikenali</span>
+                    @elseif($isNotFound)
+                        <span class="text-teal-700"><i class="fas fa-plus text-[9px] mr-0.5"></i> Akan dibuat baru (PD/Program/Kegiatan otomatis bila perlu)</span>
                     @else
-                        {{ $row['matched_sk_nama'] ?? '— tidak ditemukan —' }}
+                        {{ $row['matched_sk_nama'] ?? '—' }}
                     @endif
                 </td>
                 {{-- Aktivitas --}}
