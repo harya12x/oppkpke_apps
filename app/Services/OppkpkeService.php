@@ -370,6 +370,7 @@ class OppkpkeService
             $createdPd      = 0;
             $skippedDup     = 0;
             $skippedAmbig   = 0;
+            $totalAlokasi   = 0.0;   // total alokasi yang benar-benar diproses (import + update)
             $processedSkIds = [];
             // Cache in-memory PD/Program/Kegiatan yang sudah di-resolve dalam batch ini
             // → banyak sub kegiatan dari 1 operator/program tidak query & buat berulang
@@ -445,6 +446,8 @@ class OppkpkeService
                     LaporanOppkpke::create($payload);
                     $imported++;
                 }
+
+                $totalAlokasi += (float) $row['alokasi_anggaran'];
             }
 
             $deleted = 0;
@@ -463,6 +466,7 @@ class OppkpkeService
                 'created_pd'    => $createdPd,
                 'skipped_dup'   => $skippedDup,
                 'skipped_ambig' => $skippedAmbig,
+                'total_alokasi' => $totalAlokasi,
                 'deleted'       => $deleted,
             ];
         });

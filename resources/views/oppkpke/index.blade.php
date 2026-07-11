@@ -942,7 +942,7 @@ function renderData(data) {
                 html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-folder text-yellow-500 text-sm flex-shrink-0"></i>';
                 html += '<span class="text-sm text-gray-700 truncate">' + program + '</span>';
                 if (idxCanEditProgram && prData.id) {
-                    html += '<button type="button" class="idx-edit-prog text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + prData.id + '" data-name="' + idxEsc(program) + '" title="Ubah nama program" onclick="event.stopPropagation()"><i class="fas fa-pen text-[11px]"></i></button>';
+                    html += '<button type="button" class="idx-edit-prog text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + prData.id + '" data-name="' + idxEsc(program) + '" title="Ubah nama program" onclick="event.stopPropagation(); openEditNode(\'program\', this.getAttribute(\'data-id\'), this.getAttribute(\'data-name\'))"><i class="fas fa-pen text-[11px]"></i></button>';
                 }
                 html += '<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded flex-shrink-0">' + kgCount + ' Kegiatan</span>';
                 html += '</div><i class="fas fa-chevron-down text-gray-300 text-xs flex-shrink-0"></i></div>';
@@ -958,7 +958,7 @@ function renderData(data) {
                     html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-clipboard-list text-blue-400 text-sm flex-shrink-0"></i>';
                     html += '<span class="text-sm text-gray-600 truncate">' + kegiatan + '</span>';
                     if (idxCanEditProgram && kgData.id) {
-                        html += '<button type="button" class="idx-edit-keg text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + kgData.id + '" data-name="' + idxEsc(kegiatan) + '" title="Ubah nama kegiatan" onclick="event.stopPropagation()"><i class="fas fa-pen text-[11px]"></i></button>';
+                        html += '<button type="button" class="idx-edit-keg text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + kgData.id + '" data-name="' + idxEsc(kegiatan) + '" title="Ubah nama kegiatan" onclick="event.stopPropagation(); openEditNode(\'kegiatan\', this.getAttribute(\'data-id\'), this.getAttribute(\'data-name\'))"><i class="fas fa-pen text-[11px]"></i></button>';
                     }
                     html += '</div>';
                     html += '<div class="flex items-center gap-1.5 flex-shrink-0">';
@@ -1142,8 +1142,10 @@ function saveEditNode(){
     .fail(function(xhr){ showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Gagal menyimpan', 'error'); })
     .always(function(){ btn.disabled = false; btn.innerHTML = old; });
 }
-$(document).on('click', '.idx-edit-prog', function(e){ e.stopPropagation(); openEditNode('program', $(this).data('id'), $(this).data('name')); });
-$(document).on('click', '.idx-edit-keg',  function(e){ e.stopPropagation(); openEditNode('kegiatan', $(this).data('id'), $(this).data('name')); });
+// Catatan: tombol pensil memanggil openEditNode langsung via inline onclick +
+// event.stopPropagation() (agar accordion tak ikut toggle). Handler delegasi di
+// document TIDAK dipakai karena stopPropagation menghentikan event sebelum sampai
+// ke document (itulah penyebab pensil "tak merespons" sebelumnya).
 
 /* ═══════════════════════════════════════════════════════════════════
    WIZARD: Tambah Kegiatan Baru (Program → Kegiatan → Sub Kegiatan)

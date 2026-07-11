@@ -1417,7 +1417,11 @@ class OppkpkeController extends Controller
 
         // Apakah program utk baris ini AKAN dibuat baru? (bila ya → butuh strategi valid)
         $needsNewProgram = function (string $rowPd, string $progName, string $kode) use ($progsByPd, $pdNorm) {
-            if (trim($progName) === '') return false; // tanpa nama program → tak membuat program (pakai yang ada)
+            // Cerminkan forceCreateSkFromRow(): program dibuat baru bila TIDAK ada
+            // program di PD yang cocok berdasarkan kode ATAU nama. Kolom nama program
+            // kosong TAPI kode ada (mis. kode turunan dari kode sub kegiatan) tetap
+            // membuat program baru → jadi tetap butuh strategi valid. Karena itu jangan
+            // langsung return false hanya karena nama program kosong.
             $pn = $pdNorm($progName);
             $rp = $pdNorm($rowPd);
             $cands = collect();

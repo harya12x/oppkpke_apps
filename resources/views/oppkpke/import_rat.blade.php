@@ -43,20 +43,36 @@
                 var msg    = document.getElementById('importStatusMessage');
 
                 if (data.state === 'done') {
+                    var totalSkip = (data.skipped || 0);
+                    var perfect   = totalSkip === 0;
+                    var rp = function(n){ return 'Rp ' + Math.round(n || 0).toLocaleString('id-ID'); };
+
                     banner.classList.remove('bg-blue-50', 'border-blue-300');
                     banner.classList.add('bg-green-50', 'border-green-300');
                     icon.classList.remove('fa-circle-notch', 'fa-spin', 'text-blue-500');
                     icon.classList.add('fa-circle-check', 'text-green-500');
                     title.className = 'font-semibold text-green-800 text-sm';
-                    title.textContent = 'Import Matriks RAT Selesai';
+                    title.textContent = perfect
+                        ? 'Import Matriks RAT Selesai — Tersinkronisasi Sempurna ✓'
+                        : 'Import Matriks RAT Selesai — Tersinkronisasi ✓';
                     msg.className = 'text-green-700 text-sm mt-0.5';
-                    msg.textContent = (data.updated || 0) + ' diperbarui, ' + (data.imported || 0) + ' baru'
+
+                    var rincian = (data.updated || 0) + ' diperbarui, ' + (data.imported || 0) + ' baru'
                         + ((data.created_sk || 0) > 0 ? ', ' + data.created_sk + ' sub kegiatan baru' : '')
                         + ((data.created_hier || 0) > 0 ? ', ' + data.created_hier + ' entri hierarki baru' : '')
                         + ((data.created_pd || 0) > 0 ? ', ' + data.created_pd + ' perangkat daerah baru' : '')
                         + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
                         + ((data.skipped_ambig || 0) > 0 ? ', ' + data.skipped_ambig + ' ambigu dilewati' : '')
-                        + ', ' + (data.skipped || 0) + ' dilewati.';
+                        + ', ' + totalSkip + ' dilewati.';
+
+                    msg.innerHTML =
+                        '<div>' + rincian + '</div>'
+                        + '<div class="mt-1 font-semibold text-green-800">Total alokasi tersinkronisasi: ' + rp(data.total_alokasi) + '</div>'
+                        + '<div class="mt-0.5 text-xs ' + (perfect ? 'text-green-600' : 'text-amber-600') + '">'
+                        + (perfect
+                            ? '<i class="fas fa-circle-check mr-1"></i>Semua baris yang dicentang dieksekusi & tersinkronisasi dengan benar — tidak ada yang terlewat.'
+                            : '<i class="fas fa-circle-info mr-1"></i>' + totalSkip + ' baris tidak dicentang/dilewati. Baris "Dilewati" (strategi tak dikenali) & "Ambigu" memang tidak bisa diimpor otomatis — lihat kolom Strategi & badge di preview, perbaiki di file atau via menu Kelola Strategi, lalu upload ulang.')
+                        + '</div>';
                 } else {
                     banner.classList.remove('bg-blue-50', 'border-blue-300');
                     banner.classList.add('bg-red-50', 'border-red-300');
