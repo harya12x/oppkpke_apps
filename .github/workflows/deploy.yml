@@ -85,10 +85,15 @@ jobs:
             echo "🧹 Refresh package manifest & bersihkan cache lama..."
             docker compose exec -T app php artisan optimize:clear
 
-            # Migrasi akan tetap berjalan normal jika ada tabel/kolom baru.
-            # Ditambahkan 'timeout 60s' agar tidak menggantung selamanya jika terjadi DB Lock.
+            # Migrasi berjalan bila ada tabel/kolom baru. Migration dibuat idempotent
+            # (guard Schema::hasTable) sehingga tabel yang sudah ada tidak menyebabkan
+            # "already exists". 'timeout 120s' mencegah gantung bila DB lock.
             echo "🗄️  Jalankan migrasi database..."
-            docker compose exec -T app timeout 60s php artisan migrate --force
+            if ! docker compose exec -T app timeout 120s php artisan migrate --force; then
+              echo "❌ Migrasi GAGAL — deploy dihentikan sebelum optimize agar skema DB tidak setengah jalan."
+              echo "   Periksa migration yang belum idempotent atau tabel/kolom yang bentrok."
+              exit 1
+            fi
 
             echo "🔗 Buat storage symlink..."
             docker compose exec -T app php artisan storage:link || true
