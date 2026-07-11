@@ -366,6 +366,37 @@
     </div>
 </div>
 
+{{-- ── Modal: Ubah Nama Program / Kegiatan (operator daerah & master) ─── --}}
+@if(auth()->user()->isDaerah() || auth()->user()->isMaster())
+<div id="editNodeModal" class="fixed inset-0 z-[70] hidden items-center justify-center p-3 md:p-4">
+    <div class="absolute inset-0 bg-black/50" onclick="closeEditNode()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md z-10 overflow-hidden">
+        <div class="bg-gradient-to-r from-indigo-600 to-indigo-700 px-5 py-4 flex items-center justify-between">
+            <h3 id="en-title" class="text-white font-semibold text-sm flex items-center gap-2"><i class="fas fa-pen"></i> Ubah Nama</h3>
+            <button onclick="closeEditNode()" class="text-white/70 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div class="p-5 space-y-3">
+            <input type="hidden" id="en-type">
+            <input type="hidden" id="en-id">
+            <div>
+                <label id="en-nama-label" class="block text-sm font-medium text-gray-700 mb-1.5">Nama <span class="text-red-500">*</span></label>
+                <input id="en-nama" type="text" maxlength="500" class="w-full border rounded-lg text-sm p-2.5" placeholder="Nama">
+            </div>
+            <div>
+                <label id="en-kode-label" class="block text-sm font-medium text-gray-700 mb-1.5">Kode <span class="text-gray-400 font-normal">(opsional)</span></label>
+                <input id="en-kode" type="text" maxlength="100" class="w-full border rounded-lg text-sm p-2.5" placeholder="kosongkan bila tak diubah">
+            </div>
+            <div class="flex gap-2 pt-1">
+                <button onclick="closeEditNode()" class="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Batal</button>
+                <button id="en-save" onclick="saveEditNode()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-semibold transition">
+                    <i class="fas fa-save mr-1"></i> Simpan
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+@endif
+
 {{-- ══════════════════════════════════════════════════════════════════
      WIZARD: Tambah Kegiatan Baru (Program → Kegiatan → Sub Kegiatan)
      • Operator Daerah → terkunci ke perangkat daerah sendiri (4 langkah).
@@ -487,6 +518,25 @@
             </div>
             @endif
 
+            {{-- ── STEP: STRATEGI ──────────────────────────────────── --}}
+            <div id="wz-step-strategi" class="wz-step space-y-4 hidden">
+                <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-800 flex gap-2">
+                    <i class="fas fa-circle-info mt-0.5"></i>
+                    <div><strong>Strategi</strong> OPPKPKE yang menaungi program.@if($wzIsAdmin) Boleh pilih hingga <strong>3</strong> — hierarki dibuat di bawah tiap strategi terpilih.@endif</div>
+                </div>
+                @if($wzIsAdmin)
+                <div id="wz-strategi-multi" class="border rounded-lg p-2 max-h-56 overflow-y-auto space-y-0.5 bg-white text-sm">
+                    <span class="text-gray-400 text-xs">Memuat...</span>
+                </div>
+                <p class="text-[11px] text-gray-400"><i class="fas fa-circle-info mr-1"></i>Maksimal 3 strategi. Bila memilih &gt;1, program otomatis dibuat baru.</p>
+                @else
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1.5">Pilih Strategi <span class="text-red-500">*</span></label>
+                    <select id="wz-strategi-id" class="w-full border rounded-lg text-sm p-2.5 bg-white"><option value="">-- Memuat... --</option></select>
+                </div>
+                @endif
+            </div>
+
             {{-- ── STEP 1: PROGRAM ─────────────────────────────────── --}}
             <div id="wz-step-1" class="wz-step space-y-4 hidden">
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-800 flex gap-2">
@@ -504,7 +554,7 @@
                         <i class="fas fa-plus"></i><span>Buat program baru</span>
                     </label>
                 </div>
-                <p id="wz-prog-forcenew" class="hidden text-[11px] text-amber-600"><i class="fas fa-triangle-exclamation mr-1"></i>Karena perangkat daerahnya baru, program juga harus dibuat baru.</p>
+                <p id="wz-prog-forcenew" class="hidden text-[11px] text-amber-600"><i class="fas fa-triangle-exclamation mr-1"></i>Untuk kondisi ini, program otomatis dibuat baru.</p>
 
                 {{-- existing --}}
                 <div id="wz-prog-existing">
@@ -514,21 +564,20 @@
 
                 {{-- new --}}
                 <div id="wz-prog-new" class="hidden space-y-3">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Strategi <span class="text-red-500">*</span></label>
-                        <select id="wz-strategi-id" class="w-full border rounded-lg text-sm p-2.5 bg-white"><option value="">-- Memuat... --</option></select>
-                        <p class="text-[11px] text-gray-400 mt-1">Pilih strategi OPPKPKE yang menaungi program ini.</p>
-                    </div>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Kode Program <span class="text-red-500">*</span></label>
-                            <input id="wz-kode-program" type="text" maxlength="50" placeholder="mis. 1.06.05" class="w-full border rounded-lg text-sm p-2.5">
+                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Kode Program</label>
+                            <input id="wz-kode-program" type="text" maxlength="50" placeholder="opsional — mis. 1.06.05" class="w-full border rounded-lg text-sm p-2.5">
                         </div>
                         <div class="sm:col-span-2">
-                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Nama Program <span class="text-red-500">*</span></label>
-                            <input id="wz-nama-program" type="text" maxlength="500" placeholder="mis. Program Pemberdayaan Sosial" class="w-full border rounded-lg text-sm p-2.5">
+                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Nama Program</label>
+                            <input id="wz-nama-program" type="text" maxlength="500" placeholder="boleh dikosongkan, diisi belakangan" class="w-full border rounded-lg text-sm p-2.5">
                         </div>
                     </div>
+                    <p class="text-[11px] text-gray-400 flex items-start gap-1">
+                        <i class="fas fa-circle-info mt-0.5"></i>
+                        <span>Kode &amp; nama program boleh dikosongkan. Program dibuat sebagai <em>“{{ \App\Http\Controllers\OppkpkeController::PROGRAM_PLACEHOLDER }}”</em> dan dapat diubah namanya nanti lewat tombol edit di halaman Input Data.</span>
+                    </p>
                 </div>
             </div>
 
@@ -558,15 +607,21 @@
                 </div>
 
                 {{-- new --}}
-                <div id="wz-keg-new" class="hidden grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Kode Kegiatan</label>
-                        <input id="wz-kode-kegiatan" type="text" maxlength="100" placeholder="opsional" class="w-full border rounded-lg text-sm p-2.5">
+                <div id="wz-keg-new" class="hidden space-y-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Kode Kegiatan</label>
+                            <input id="wz-kode-kegiatan" type="text" maxlength="100" placeholder="opsional" class="w-full border rounded-lg text-sm p-2.5">
+                        </div>
+                        <div class="sm:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1.5">Nama Kegiatan</label>
+                            <input id="wz-nama-kegiatan" type="text" maxlength="500" placeholder="boleh dikosongkan, diisi belakangan" class="w-full border rounded-lg text-sm p-2.5">
+                        </div>
                     </div>
-                    <div class="sm:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-1.5">Nama Kegiatan <span class="text-red-500">*</span></label>
-                        <input id="wz-nama-kegiatan" type="text" maxlength="500" placeholder="mis. Pemberdayaan Sosial KAT" class="w-full border rounded-lg text-sm p-2.5">
-                    </div>
+                    <p class="text-[11px] text-gray-400 flex items-start gap-1">
+                        <i class="fas fa-circle-info mt-0.5"></i>
+                        <span>Nama kegiatan boleh dikosongkan — dibuat sebagai <em>“{{ \App\Http\Controllers\OppkpkeController::KEGIATAN_PLACEHOLDER }}”</em> dan dapat diubah operator daerah lewat tombol edit di halaman Input Data.</span>
+                    </p>
                 </div>
             </div>
 
@@ -648,6 +703,10 @@ var _idxSumberItems = [
     { value: 'DAK',  label: 'DAK'  }, { value: 'Dana Desa', label: 'Dana Desa' },
     { value: 'Lainnya', label: 'Lainnya' }
 ];
+
+// Edit nama program (operator daerah & master) — tombol pensil di pohon Input Data.
+var idxCanEditProgram = {{ (auth()->user()->isDaerah() || auth()->user()->isMaster()) ? 'true' : 'false' }};
+function idxEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
 function idxSetBtn(field, value, label) {
     document.getElementById('filter-' + field).value = value != null ? value : '';
@@ -835,9 +894,10 @@ function renderData(data) {
         var kg  = item.kegiatan?.nama_kegiatan             || '-';
         tree[s] = tree[s] || { id: sId, perangkat: {} };
         tree[s].perangkat[pd] = tree[s].perangkat[pd] || { program: {} };
-        tree[s].perangkat[pd].program[pr] = tree[s].perangkat[pd].program[pr] || { kegiatan: {} };
-        tree[s].perangkat[pd].program[pr].kegiatan[kg] = tree[s].perangkat[pd].program[pr].kegiatan[kg] || [];
-        tree[s].perangkat[pd].program[pr].kegiatan[kg].push(item);
+        tree[s].perangkat[pd].program[pr] = tree[s].perangkat[pd].program[pr] || { id: item.kegiatan?.program?.id, kegiatan: {} };
+        var _kg = tree[s].perangkat[pd].program[pr].kegiatan;
+        _kg[kg] = _kg[kg] || { id: item.kegiatan?.id, items: [] };
+        _kg[kg].items.push(item);
     });
 
     var colors = {
@@ -881,18 +941,26 @@ function renderData(data) {
                 html += '<div class="px-3 md:px-4 py-2 cursor-pointer flex items-center justify-between ml-4 md:ml-8 hover:bg-gray-50" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
                 html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-folder text-yellow-500 text-sm flex-shrink-0"></i>';
                 html += '<span class="text-sm text-gray-700 truncate">' + program + '</span>';
+                if (idxCanEditProgram && prData.id) {
+                    html += '<button type="button" class="idx-edit-prog text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + prData.id + '" data-name="' + idxEsc(program) + '" title="Ubah nama program" onclick="event.stopPropagation()"><i class="fas fa-pen text-[11px]"></i></button>';
+                }
                 html += '<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded flex-shrink-0">' + kgCount + ' Kegiatan</span>';
                 html += '</div><i class="fas fa-chevron-down text-gray-300 text-xs flex-shrink-0"></i></div>';
                 html += '<div class="accordion-content" style="display:none;">';
 
                 Object.keys(prData.kegiatan).forEach(function (kegiatan) {
-                    var items       = prData.kegiatan[kegiatan];
+                    var kgData      = prData.kegiatan[kegiatan];
+                    var items       = kgData.items;
                     var filledCount = items.filter(function (i) { return i.laporan && i.laporan[0] && i.laporan[0].alokasi_anggaran > 0; }).length;
 
                     html += '<div class="border-t border-dotted">';
                     html += '<div class="px-3 md:px-4 py-2 cursor-pointer flex items-center justify-between ml-6 md:ml-12 hover:bg-blue-50/50" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
                     html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-clipboard-list text-blue-400 text-sm flex-shrink-0"></i>';
-                    html += '<span class="text-sm text-gray-600 truncate">' + kegiatan + '</span></div>';
+                    html += '<span class="text-sm text-gray-600 truncate">' + kegiatan + '</span>';
+                    if (idxCanEditProgram && kgData.id) {
+                        html += '<button type="button" class="idx-edit-keg text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + kgData.id + '" data-name="' + idxEsc(kegiatan) + '" title="Ubah nama kegiatan" onclick="event.stopPropagation()"><i class="fas fa-pen text-[11px]"></i></button>';
+                    }
+                    html += '</div>';
                     html += '<div class="flex items-center gap-1.5 flex-shrink-0">';
                     html += '<span class="text-xs ' + (filledCount === items.length ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700') + ' px-2 py-0.5 rounded">' + filledCount + '/' + items.length + '</span>';
                     html += '<i class="fas fa-chevron-down text-gray-300 text-xs"></i></div></div>';
@@ -1034,14 +1102,58 @@ function saveData() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   UBAH NAMA PROGRAM / KEGIATAN (operator daerah & master)
+═══════════════════════════════════════════════════════════════════ */
+var EN_META = {
+    program:  { label: 'Program',  placeholder: 'Program (belum diisi)' },
+    kegiatan: { label: 'Kegiatan', placeholder: 'Kegiatan (belum diisi)' }
+};
+function openEditNode(type, id, name){
+    var meta = EN_META[type]; if (!meta) return;
+    document.getElementById('en-type').value = type;
+    document.getElementById('en-id').value   = id;
+    document.getElementById('en-nama').value = (name && name !== meta.placeholder) ? name : '';
+    document.getElementById('en-kode').value = '';
+    document.getElementById('en-kode').maxLength = (type === 'program') ? 50 : 100;
+    document.getElementById('en-title').innerHTML = '<i class="fas fa-pen"></i> Ubah Nama ' + meta.label;
+    document.getElementById('en-nama-label').innerHTML = 'Nama ' + meta.label + ' <span class="text-red-500">*</span>';
+    document.getElementById('en-kode-label').innerHTML = 'Kode ' + meta.label + ' <span class="text-gray-400 font-normal">(opsional)</span>';
+    var m = document.getElementById('editNodeModal');
+    m.classList.remove('hidden'); m.classList.add('flex');
+    setTimeout(function(){ document.getElementById('en-nama').focus(); }, 50);
+}
+function closeEditNode(){
+    var m = document.getElementById('editNodeModal');
+    m.classList.add('hidden'); m.classList.remove('flex');
+}
+function saveEditNode(){
+    var type = document.getElementById('en-type').value;
+    var id   = document.getElementById('en-id').value;
+    var nama = document.getElementById('en-nama').value.trim();
+    if (!nama){ showToast('Nama ' + (EN_META[type] ? EN_META[type].label.toLowerCase() : '') + ' wajib diisi', 'error'); return; }
+    var kode = document.getElementById('en-kode').value.trim();
+    var btn  = document.getElementById('en-save'); var old = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan...';
+    var data = { _token: '{{ csrf_token() }}', _method: 'PATCH' };
+    data['nama_' + type] = nama;
+    data['kode_' + type] = kode;
+    $.ajax({ url: '{{ url('oppkpke') }}/' + type + '/' + id, method: 'POST', data: data })
+    .done(function(res){ showToast(res.message || 'Diperbarui', 'success'); closeEditNode(); loadData(); })
+    .fail(function(xhr){ showToast((xhr.responseJSON && xhr.responseJSON.message) || 'Gagal menyimpan', 'error'); })
+    .always(function(){ btn.disabled = false; btn.innerHTML = old; });
+}
+$(document).on('click', '.idx-edit-prog', function(e){ e.stopPropagation(); openEditNode('program', $(this).data('id'), $(this).data('name')); });
+$(document).on('click', '.idx-edit-keg',  function(e){ e.stopPropagation(); openEditNode('kegiatan', $(this).data('id'), $(this).data('name')); });
+
+/* ═══════════════════════════════════════════════════════════════════
    WIZARD: Tambah Kegiatan Baru (Program → Kegiatan → Sub Kegiatan)
 ═══════════════════════════════════════════════════════════════════ */
 @if($wzCanUse)
 var wzIsAdmin = {{ $wzIsAdmin ? 'true' : 'false' }};
-var wzOrder   = wzIsAdmin ? ['pd','program','kegiatan','sub','review'] : ['program','kegiatan','sub','review'];
+var wzOrder   = wzIsAdmin ? ['pd','strategi','program','kegiatan','sub','review'] : ['strategi','program','kegiatan','sub','review'];
 var wzIdx     = 0;
-var wzPanel   = { pd:'wz-step-pd', program:'wz-step-1', kegiatan:'wz-step-2', sub:'wz-step-3', review:'wz-step-4' };
-var wzLabel   = { pd:'Perangkat Daerah', program:'Program', kegiatan:'Kegiatan', sub:'Sub Kegiatan', review:'Tinjau' };
+var wzPanel   = { pd:'wz-step-pd', strategi:'wz-step-strategi', program:'wz-step-1', kegiatan:'wz-step-2', sub:'wz-step-3', review:'wz-step-4' };
+var wzLabel   = { pd:'Perangkat Daerah', strategi:'Strategi', program:'Program', kegiatan:'Kegiatan', sub:'Sub Kegiatan', review:'Tinjau' };
 var wzCsrf    = '{{ csrf_token() }}';
 var wzUrls = {
     strategi:        '{{ route("oppkpke.options.strategi") }}',
@@ -1079,6 +1191,8 @@ function wzOpen(){
     document.querySelectorAll('#wz-modal input[type=text]').forEach(function(i){ i.value=''; });
     document.querySelector('input[name=wz_program_mode][value=existing]').checked = true;
     document.querySelector('input[name=wz_kegiatan_mode][value=existing]').checked = true;
+    document.querySelectorAll('#wz-modal .wz-strat').forEach(function(c){ c.checked = false; });
+    var _ss = document.getElementById('wz-strategi-id'); if (_ss) _ss.value = '';
     if (wzIsAdmin){
         document.querySelector('input[name=wz_pd_mode][value=existing]').checked = true;
         wzSetPdMode('existing');
@@ -1089,8 +1203,7 @@ function wzOpen(){
     document.getElementById('wz-kegiatan-id').innerHTML = '<option value="">-- Pilih program dulu --</option>';
     wzSetProgramMode('existing');
     wzSetKegiatanMode('existing');
-    wzLoadStrategi();
-    if (!wzIsAdmin) wzLoadPrograms();   // operator: program otomatis PD sendiri
+    wzLoadStrategi();   // isi langkah Strategi; program dimuat setelah strategi dipilih
     wzBuildStepper();
     wzShow(0);
     var m = document.getElementById('wz-modal');
@@ -1137,8 +1250,8 @@ function wzSetProgramMode(mode){
     document.getElementById('wz-prog-existing').classList.toggle('hidden', mode!=='existing');
     document.getElementById('wz-prog-new').classList.toggle('hidden', mode!=='new');
     wzSyncCards('program');
-    if (mode==='new') wzLoadStrategi();
 }
+function wzTargetPdId(){ return wzIsAdmin ? wzVal('wz-pd-id') : null; }
 function wzSetKegiatanMode(mode){
     document.getElementById('wz-keg-existing').classList.toggle('hidden', mode!=='existing');
     document.getElementById('wz-keg-new').classList.toggle('hidden', mode!=='new');
@@ -1151,6 +1264,9 @@ function wzForceProgramNew(force){
         document.getElementById('wz-prog-mode-wrap').classList.add('hidden');
         document.getElementById('wz-prog-forcenew').classList.remove('hidden');
     } else {
+        // Kembalikan default ke "existing" agar dropdown program yang dimuat terlihat.
+        document.querySelector('input[name=wz_program_mode][value=existing]').checked = true;
+        wzSetProgramMode('existing');
         document.getElementById('wz-prog-mode-wrap').classList.remove('hidden');
         document.getElementById('wz-prog-forcenew').classList.add('hidden');
     }
@@ -1162,16 +1278,42 @@ function wzForceKegiatanNew(force){
         document.getElementById('wz-keg-mode-wrap').classList.add('hidden');
         document.getElementById('wz-keg-forcenew').classList.remove('hidden');
     } else {
+        document.querySelector('input[name=wz_kegiatan_mode][value=existing]').checked = true;
+        wzSetKegiatanMode('existing');
         document.getElementById('wz-keg-mode-wrap').classList.remove('hidden');
         document.getElementById('wz-keg-forcenew').classList.add('hidden');
     }
 }
 
+function wzStratMax(){ return wzIsAdmin ? 3 : 1; }
+function wzStratSelected(){
+    var multi = document.getElementById('wz-strategi-multi');
+    if (multi) {
+        return Array.prototype.map.call(multi.querySelectorAll('.wz-strat:checked'), function(c){ return c.value; });
+    }
+    var sel = document.getElementById('wz-strategi-id');
+    return (sel && sel.value) ? [sel.value] : [];
+}
+function wzStratLimit(cb){
+    var checked = document.querySelectorAll('#wz-strategi-multi .wz-strat:checked');
+    if (checked.length > wzStratMax()){ cb.checked = false; showToast('Maksimal ' + wzStratMax() + ' strategi', 'error'); }
+}
 function wzLoadStrategi(){
     if (wzStrategiLoaded) return;
     $.get(wzUrls.strategi).done(function(list){
-        document.getElementById('wz-strategi-id').innerHTML = '<option value="">-- Pilih Strategi --</option>' +
-            list.map(function(s){ return '<option value="'+s.id+'">'+wzEsc((s.kode?s.kode+' — ':'')+s.nama)+'</option>'; }).join('');
+        var sel = document.getElementById('wz-strategi-id');
+        if (sel) {
+            sel.innerHTML = '<option value="">-- Pilih Strategi --</option>' +
+                list.map(function(s){ return '<option value="'+s.id+'">'+wzEsc((s.kode?s.kode+' — ':'')+s.nama)+'</option>'; }).join('');
+        }
+        var multi = document.getElementById('wz-strategi-multi');
+        if (multi) {
+            multi.innerHTML = list.map(function(s){
+                return '<label class="flex items-center gap-2 px-1 py-1 cursor-pointer hover:bg-gray-50 rounded">'
+                    + '<input type="checkbox" class="wz-strat" value="'+s.id+'" onchange="wzStratLimit(this)">'
+                    + '<span>'+wzEsc((s.kode?s.kode+' — ':'')+s.nama)+'</span></label>';
+            }).join('');
+        }
         wzStrategiLoaded = true;
     });
 }
@@ -1183,8 +1325,10 @@ function wzLoadPds(){
         wzPdLoaded = true;
     });
 }
-function wzLoadPrograms(pdId){
-    var data = pdId ? { perangkat_daerah_id: pdId } : {};
+function wzLoadPrograms(pdId, strategiId){
+    var data = {};
+    if (pdId) data.perangkat_daerah_id = pdId;
+    if (strategiId) data.strategi_id = strategiId;
     $.get(wzUrls.programs, data).done(function(list){
         var sel = document.getElementById('wz-program-id');
         if (!list.length){ sel.innerHTML = '<option value="">(Belum ada program — silakan buat baru)</option>'; return; }
@@ -1206,16 +1350,14 @@ function wzValidateKey(key){
     if (key==='pd'){
         if (wzPdMode()==='existing'){ if (!wzVal('wz-pd-id')){ showToast('Pilih perangkat daerah tujuan','error'); return false; } }
         else { if (!wzVal('wz-pd-nama')){ showToast('Isi nama perangkat daerah','error'); return false; } }
+    } else if (key==='strategi'){
+        if (wzStratSelected().length < 1){ showToast('Pilih minimal satu strategi','error'); return false; }
     } else if (key==='program'){
         if (wzProgramMode()==='existing'){ if (!wzVal('wz-program-id')){ showToast('Pilih program terlebih dahulu','error'); return false; } }
-        else {
-            if (!wzVal('wz-strategi-id')){ showToast('Pilih strategi','error'); return false; }
-            if (!wzVal('wz-kode-program')){ showToast('Isi kode program','error'); return false; }
-            if (!wzVal('wz-nama-program')){ showToast('Isi nama program','error'); return false; }
-        }
+        // Program baru: nama & kode opsional — tidak ada yang wajib di sini.
     } else if (key==='kegiatan'){
         if (wzKegiatanMode()==='existing'){ if (!wzVal('wz-kegiatan-id')){ showToast('Pilih kegiatan terlebih dahulu','error'); return false; } }
-        else { if (!wzVal('wz-nama-kegiatan')){ showToast('Isi nama kegiatan','error'); return false; } }
+        // Kegiatan baru: nama opsional — tidak ada yang wajib.
     } else if (key==='sub'){
         if (!wzVal('wz-nama-sub')){ showToast('Isi nama sub kegiatan','error'); return false; }
     }
@@ -1225,13 +1367,16 @@ function wzValidateKey(key){
 function wzNext(){
     var key = wzOrder[wzIdx];
     if (!wzValidateKey(key)) return;
-    if (key==='pd'){
-        if (wzPdMode()==='new'){
-            // PD baru → tidak ada program lama → program (dan kegiatan) wajib baru.
+    if (key==='strategi'){
+        // PD baru ATAU >1 strategi → program tak mungkin/ambigu diambil dari yang ada → wajib baru.
+        var pdBaru = wzIsAdmin && wzPdMode()==='new';
+        var strat  = wzStratSelected();
+        if (pdBaru || strat.length > 1){
             wzForceProgramNew(true);
         } else {
             wzForceProgramNew(false);
-            wzLoadPrograms(wzVal('wz-pd-id'));
+            // Muat program yang sudah ada untuk PD tujuan, difilter strategi terpilih.
+            wzLoadPrograms(wzTargetPdId(), strat[0]);
         }
     }
     if (key==='program'){
@@ -1254,14 +1399,30 @@ function wzRenderReview(){
             : wzVal('wz-pd-nama') + (wzVal('wz-pd-singkatan') ? ' ('+wzVal('wz-pd-singkatan')+')' : '');
         html += row('Perangkat Daerah', pdTxt, wzPdMode()==='new');
     }
+    // Strategi (untuk program baru): tampilkan jumlah/daftar terpilih.
+    if (wzProgramMode()==='new'){
+        var nStrat = wzStratSelected().length;
+        var stratTxt;
+        var multi = document.getElementById('wz-strategi-multi');
+        if (multi){
+            var names = Array.prototype.map.call(multi.querySelectorAll('.wz-strat:checked'), function(c){ return c.parentNode.textContent.trim(); });
+            stratTxt = nStrat + ' strategi' + (names.length ? ' — ' + names.join('; ') : '');
+        } else {
+            stratTxt = wzSelText('wz-strategi-id');
+        }
+        html += row('Strategi', stratTxt, false);
+    }
     var progTxt = wzProgramMode()==='existing' ? wzSelText('wz-program-id')
-        : (wzVal('wz-kode-program')?wzVal('wz-kode-program')+' — ':'')+wzVal('wz-nama-program');
+        : (wzVal('wz-kode-program')?wzVal('wz-kode-program')+' — ':'')+(wzVal('wz-nama-program') || 'Program (belum diisi)');
     var kegTxt  = wzKegiatanMode()==='existing' ? wzSelText('wz-kegiatan-id')
-        : (wzVal('wz-kode-kegiatan')?wzVal('wz-kode-kegiatan')+' — ':'')+wzVal('wz-nama-kegiatan');
+        : (wzVal('wz-kode-kegiatan')?wzVal('wz-kode-kegiatan')+' — ':'')+(wzVal('wz-nama-kegiatan') || 'Kegiatan (belum diisi)');
     var subTxt  = (wzVal('wz-kode-sub')?wzVal('wz-kode-sub')+' — ':'')+wzVal('wz-nama-sub');
     html += row('Program', progTxt, wzProgramMode()==='new')
           + row('Kegiatan', kegTxt, wzKegiatanMode()==='new')
           + row('Sub Kegiatan', subTxt, true);
+    if (wzProgramMode()==='new' && wzStratSelected().length > 1){
+        html += '<p class="text-[11px] text-indigo-600"><i class="fas fa-circle-info mr-1"></i>Rantai program → kegiatan → sub akan dibuat di ' + wzStratSelected().length + ' strategi.</p>';
+    }
     document.getElementById('wz-review').innerHTML = html;
 }
 
@@ -1281,7 +1442,12 @@ function wzSubmit(){
         else { payload.pd_nama = wzVal('wz-pd-nama'); payload.pd_singkatan = wzVal('wz-pd-singkatan'); }
     }
     if (payload.program_mode==='existing'){ payload.program_id = wzVal('wz-program-id'); }
-    else { payload.strategi_id = wzVal('wz-strategi-id'); payload.kode_program = wzVal('wz-kode-program'); payload.nama_program = wzVal('wz-nama-program'); }
+    else {
+        var strat = wzStratSelected();
+        if (wzIsAdmin){ payload.strategi_ids = strat; } else { payload.strategi_id = strat[0] || ''; }
+        payload.kode_program = wzVal('wz-kode-program');
+        payload.nama_program = wzVal('wz-nama-program');
+    }
     if (payload.kegiatan_mode==='existing'){ payload.kegiatan_id = wzVal('wz-kegiatan-id'); }
     else { payload.nama_kegiatan = wzVal('wz-nama-kegiatan'); payload.kode_kegiatan = wzVal('wz-kode-kegiatan'); }
 

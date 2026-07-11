@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\HierarkiImportController;
 use App\Http\Controllers\OppkpkeController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SessionController;
@@ -87,6 +88,30 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
     // --------------------------------------------------
     Route::post('/hierarki', [OppkpkeController::class, 'hierarchyStore'])
         ->middleware('throttle:30,1')->name('hierarki.store');
+
+    // Ubah nama program/kegiatan (operator daerah: terkunci ke PD-nya) — dari halaman Input Data.
+    Route::patch('/program/{id}', [OppkpkeController::class, 'programUpdate'])
+        ->middleware('throttle:60,1')->name('program.update');
+    Route::patch('/kegiatan/{id}', [OppkpkeController::class, 'kegiatanUpdate'])
+        ->middleware('throttle:60,1')->name('kegiatan.update');
+
+    // --------------------------------------------------
+    // IMPORT HIERARKI via Excel (Admin) — PD → Strategi → Program → Kegiatan → Sub.
+    // Selalu: unduh template → upload → PREVIEW → eksekusi.
+    // --------------------------------------------------
+    Route::middleware('role:master,it_team')->group(function () {
+        Route::get('/import-hierarki',          [HierarkiImportController::class, 'page'])->name('import.hierarki');
+        Route::get('/import-hierarki/template',  [HierarkiImportController::class, 'template'])->name('import.hierarki.template');
+        Route::post('/import-hierarki/preview',  [HierarkiImportController::class, 'preview'])->name('import.hierarki.preview');
+        Route::post('/import-hierarki/execute',  [HierarkiImportController::class, 'execute'])->middleware('throttle:20,1')->name('import.hierarki.execute');
+    });
+
+    // --------------------------------------------------
+    // RINGKASAN OTOMATIS — narasi ringan (dihitung server, tanpa LLM).
+    // Dashboard, khusus Top Management & Tim IT.
+    // --------------------------------------------------
+    Route::get('/ringkasan', [OppkpkeController::class, 'ringkasan'])
+        ->middleware('role:master,it_team')->name('ringkasan');
 
     // --------------------------------------------------
     // IMPORT DATA — OPPKPKE 21 kolom
@@ -193,6 +218,24 @@ Route::prefix('admin/sessions')->name('admin.sessions.')->middleware(['auth', 'r
 Route::prefix('admin/perangkat-daerah')->name('admin.perangkat-daerah.')->middleware(['auth', 'role:it_team,master'])->group(function () {
     Route::get('/',      [\App\Http\Controllers\PerangkatDaerahController::class, 'index'])->name('index');
     Route::post('/merge', [\App\Http\Controllers\PerangkatDaerahController::class, 'merge'])->middleware('throttle:20,1')->name('merge');
+});
+
+// =====================================================
+// KELOLA MENU — aktivasi/deaktivasi menu per role (Tim IT & Master)
+// =====================================================
+
+Route::prefix('admin/menu-settings')->name('admin.menu-settings.')->middleware(['auth', 'role:it_team,master'])->group(function () {
+    Route::get('/',  [\App\Http\Controllers\MenuSettingController::class, 'index'])->name('index');
+    Route::post('/', [\App\Http\Controllers\MenuSettingController::class, 'update'])->middleware('throttle:30,1')->name('update');
+});
+
+// =====================================================
+// KELOLA STRATEGI — edit label/nama strategi (Tim IT & Master)
+// =====================================================
+
+Route::prefix('admin/strategi')->name('admin.strategi.')->middleware(['auth', 'role:it_team,master'])->group(function () {
+    Route::get('/',            [\App\Http\Controllers\StrategiController::class, 'index'])->name('index');
+    Route::patch('/{id}',      [\App\Http\Controllers\StrategiController::class, 'update'])->middleware('throttle:30,1')->name('update');
 });
 
 Route::prefix('admin/users')->name('admin.users.')->middleware(['auth', 'role:master'])->group(function () {

@@ -369,6 +369,7 @@ class OppkpkeService
             $createdHier    = 0;
             $createdPd      = 0;
             $skippedDup     = 0;
+            $skippedAmbig   = 0;
             $processedSkIds = [];
 
             foreach ($cached['rows'] as $row) {
@@ -376,6 +377,8 @@ class OppkpkeService
 
                 if (in_array($rowNumStr, $skip)) { $skipped++; continue; }
                 if ($row['status'] === 'duplicate') { $skippedDup++; continue; }
+                // Baris ambigu TIDAK diproses (sistem tak menebak) — admin memperbaiki file.
+                if ($row['status'] === 'ambiguous') { $skippedAmbig++; continue; }
 
                 $skId = $row['sub_kegiatan_id'];
 
@@ -396,6 +399,15 @@ class OppkpkeService
                 if (!$skId) { $skipped++; continue; }
 
                 $processedSkIds[] = $skId;
+
+                // Isi kode sub kegiatan dari prefix nama di file (kolom G) bila kolom
+                // kode-nya masih kosong. Tidak menimpa kode yang sudah ada.
+                $kodeSub = trim((string) ($row['kode_sub'] ?? ''));
+                if ($kodeSub !== '') {
+                    SubKegiatan::where('id', $skId)
+                        ->where(fn ($q) => $q->whereNull('kode')->orWhere('kode', ''))
+                        ->update(['kode' => $kodeSub]);
+                }
 
                 $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
                     ->where('tahun', $cached['tahun'])->first();
@@ -439,14 +451,15 @@ class OppkpkeService
             }
 
             return [
-                'imported'     => $imported,
-                'updated'      => $updated,
-                'skipped'      => $skipped,
-                'created_sk'   => $createdSk,
-                'created_hier' => $createdHier,
-                'created_pd'   => $createdPd,
-                'skipped_dup'  => $skippedDup,
-                'deleted'      => $deleted,
+                'imported'      => $imported,
+                'updated'       => $updated,
+                'skipped'       => $skipped,
+                'created_sk'    => $createdSk,
+                'created_hier'  => $createdHier,
+                'created_pd'    => $createdPd,
+                'skipped_dup'   => $skippedDup,
+                'skipped_ambig' => $skippedAmbig,
+                'deleted'       => $deleted,
             ];
         });
     }
@@ -495,25 +508,24 @@ class OppkpkeService
                     ->first();
             }
             if (!$prog) {
-                $stratNorm = $normalize($row['strategi'] ?? '');
-                $strategi  = StrategiOppkpke::where('is_active', true)->get()->first(fn($s) =>
-                    str_contains($stratNorm, $normalize($s->kode)) ||
-                    str_contains($stratNorm, $normalize($s->nama))
-                ) ?? StrategiOppkpke::where('is_active', true)->orderBy('id')->first();
-
-                if ($strategi) {
-                    $prog = Program::firstOrCreate(
-                        [
-                            'strategi_id'         => $strategi->id,
-                            'perangkat_daerah_id' => $pd->id,
-                            'kode_program'        => $row['kode'] ?? '',
-                        ],
-                        [
-                            'nama_program' => $progName,
-                            'is_active'    => true,
-                        ]
-                    );
+                // Program HARUS dibuat baru → butuh strategi yang valid dari file.
+                // Tidak ada fallback diam-diam ke strategi pertama: bila tak dikenali,
+                // batalkan baris ini (return null) agar tak salah menempatkan strategi.
+                $strategi = StrategiOppkpke::resolveFromText($row['strategi'] ?? '');
+                if (!$strategi) {
+                    return null;
                 }
+                $prog = Program::firstOrCreate(
+                    [
+                        'strategi_id'         => $strategi->id,
+                        'perangkat_daerah_id' => $pd->id,
+                        'kode_program'        => $row['kode'] ?? '',
+                    ],
+                    [
+                        'nama_program' => $progName,
+                        'is_active'    => true,
+                    ]
+                );
             }
         }
 

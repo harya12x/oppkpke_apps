@@ -55,6 +55,7 @@
                         + ((data.created_hier || 0) > 0 ? ', ' + data.created_hier + ' entri hierarki baru' : '')
                         + ((data.created_pd || 0) > 0 ? ', ' + data.created_pd + ' perangkat daerah baru' : '')
                         + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
+                        + ((data.skipped_ambig || 0) > 0 ? ', ' + data.skipped_ambig + ' ambigu dilewati' : '')
                         + ', ' + (data.skipped || 0) + ' dilewati.';
                 } else {
                     banner.classList.remove('bg-blue-50', 'border-blue-300');
@@ -260,6 +261,20 @@
         <p class="text-[10px] text-orange-400">digabung ke baris pertama</p>
     </div>
     @endif
+    @if(($stats['ambiguous'] ?? 0) > 0)
+    <div class="bg-white rounded-xl border border-yellow-300 p-3 shadow-sm">
+        <p class="text-xs text-yellow-700 font-medium">Ambigu</p>
+        <p class="text-2xl font-bold text-yellow-600">{{ $stats['ambiguous'] }}</p>
+        <p class="text-[10px] text-yellow-500">perlu diperbaiki — dilewati</p>
+    </div>
+    @endif
+    @if(($stats['strategi_warn'] ?? 0) > 0)
+    <div class="bg-white rounded-xl border border-red-300 p-3 shadow-sm">
+        <p class="text-xs text-red-600 font-medium">Strategi?</p>
+        <p class="text-2xl font-bold text-red-500">{{ $stats['strategi_warn'] }}</p>
+        <p class="text-[10px] text-red-400">strategi tak dikenali — dilewati</p>
+    </div>
+    @endif
     <div class="col-span-2 md:col-span-1 bg-green-50 rounded-xl border border-green-200 p-3 shadow-sm">
         <p class="text-xs text-green-700 font-medium">Total Alokasi File</p>
         <p class="text-base font-bold text-green-800 break-all">Rp {{ number_format($ratTotalAlokasi, 0, ',', '.') }}</p>
@@ -290,7 +305,31 @@
 </div>
 @endif
 
-{{-- Info bar --}}
+@if(($stats['strategi_warn'] ?? 0) > 0)
+<div class="flex items-start gap-3 bg-red-50 border border-red-300 rounded-xl p-3 mb-4 text-sm">
+    <i class="fas fa-triangle-exclamation text-red-500 mt-0.5 flex-shrink-0"></i>
+    <div>
+        <p class="font-semibold text-red-800">{{ $stats['strategi_warn'] }} baris dengan strategi tak dikenali — TIDAK diimport</p>
+        <p class="text-red-700 text-xs mt-0.5">
+            Baris <span class="bg-red-100 text-red-700 rounded px-1.5 py-0.5 font-semibold">Tidak Cocok</span> ini perlu <strong>membuat program baru</strong>, tetapi nilai <strong>Strategi</strong> di file tidak cocok dengan strategi OPPKPKE mana pun. Untuk menghindari salah penempatan, baris ini <strong>dilewati</strong>. Perbaiki kolom Strategi (pakai kode/nama yang benar) lalu upload ulang.
+        </p>
+    </div>
+</div>
+@endif
+
+@if(($stats['ambiguous'] ?? 0) > 0)
+<div class="flex items-start gap-3 bg-yellow-50 border border-yellow-300 rounded-xl p-3 mb-4 text-sm">
+    <i class="fas fa-circle-question text-yellow-500 mt-0.5 flex-shrink-0"></i>
+    <div>
+        <p class="font-semibold text-yellow-800">{{ $stats['ambiguous'] }} baris ambigu — TIDAK diimport (sistem tidak menebak)</p>
+        <p class="text-yellow-700 text-xs mt-0.5">
+            Baris bertanda <span class="bg-yellow-100 text-yellow-800 rounded px-1.5 py-0.5 font-semibold">Ambigu</span> memiliki beberapa Sub Kegiatan bernama sama di perangkat daerah yang sama. Untuk keakuratan, baris ini <strong>dilewati</strong>. Tambahkan <strong>Kode</strong> yang membedakan atau perjelas nama Sub Kegiatan di file, lalu upload ulang.
+        </p>
+    </div>
+</div>
+@endif
+
+{{-- Info bar + filter --}}
 <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
     <div class="flex items-center gap-3">
         <span class="text-sm font-medium text-gray-700">
@@ -309,6 +348,24 @@
     </div>
 </div>
 
+{{-- Filter & pencarian (sisi klien, tidak mengubah pilihan centang) --}}
+<div class="flex flex-wrap items-center gap-2 mb-3">
+    <div class="relative flex-1 min-w-[220px]">
+        <i class="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+        <input id="rat-search" type="text" placeholder="Cari sub kegiatan / perangkat daerah..."
+               oninput="ratFilter()" class="w-full border border-gray-300 rounded-lg pl-8 pr-3 py-2 text-sm focus:ring-2 focus:ring-green-500">
+    </div>
+    <div class="flex flex-wrap gap-1">
+        <button type="button" data-f="all" onclick="ratSetFilter('all')" class="rat-chip rat-chip-active">Semua</button>
+        <button type="button" data-f="matched" onclick="ratSetFilter('matched')" class="rat-chip">Cocok</button>
+        @if(($stats['new_sk'] ?? 0) > 0)<button type="button" data-f="new_sk" onclick="ratSetFilter('new_sk')" class="rat-chip">Buat SK</button>@endif
+        <button type="button" data-f="not_found" onclick="ratSetFilter('not_found')" class="rat-chip">Tidak Cocok</button>
+        @if(($stats['ambiguous'] ?? 0) > 0)<button type="button" data-f="ambiguous" onclick="ratSetFilter('ambiguous')" class="rat-chip">Ambigu</button>@endif
+        @if(($stats['duplicate'] ?? 0) > 0)<button type="button" data-f="duplicate" onclick="ratSetFilter('duplicate')" class="rat-chip">Duplikat</button>@endif
+    </div>
+    <span id="rat-filter-count" class="text-xs text-gray-400 whitespace-nowrap"></span>
+</div>
+
 {{-- Preview table --}}
 <div class="bg-white rounded-xl border shadow-sm overflow-hidden mb-4">
     <div class="overflow-x-auto" style="max-height: 68vh; overflow-y:auto;">
@@ -321,6 +378,7 @@
                 <th class="border border-green-800 px-2 py-2 text-center w-10">#</th>
                 <th class="border border-green-800 px-2 py-2 text-center w-24">Status</th>
                 <th class="border border-green-800 px-2 py-2 text-left w-40">Perangkat Daerah</th>
+                <th class="border border-green-800 px-2 py-2 text-left w-36">Strategi</th>
                 <th class="border border-green-800 px-2 py-2 text-left">Sub Kegiatan (File)</th>
                 <th class="border border-green-800 px-2 py-2 text-left">Sub Kegiatan (DB)</th>
                 <th class="border border-green-800 px-2 py-2 text-left w-36">Aktivitas Langsung</th>
@@ -348,7 +406,9 @@
                 $isNewSk     = $status === 'new_sk';
                 $isDuplicate = $status === 'duplicate';
                 $isNotFound  = $status === 'not_found';
-                $canImport   = $isMatched || $isNewSk || $isNotFound;
+                $isAmbiguous = $status === 'ambiguous';
+                $strategiWarn = $isNotFound && !empty($row['strategi_warn']);
+                $canImport   = $isMatched || $isNewSk || ($isNotFound && !$strategiWarn);
                 $isUpdate    = $isMatched && $row['has_existing'];
                 if ($canImport) { $totAlokasi += $row['alokasi_anggaran']; $checkedCount++; }
                 $bg = match($status) {
@@ -356,10 +416,12 @@
                     'new_sk'    => '#FAF5FF',
                     'not_found' => '#FFF1F2',
                     'duplicate' => '#FFF7ED',
+                    'ambiguous' => '#FEFCE8',
                     default     => '#fff',
                 };
+                $rowSearch = strtolower(trim(($row['sub_kegiatan'] ?? '') . ' ' . ($row['matched_pd_nama'] ?? $row['perangkat_daerah'] ?? '')));
             @endphp
-            <tr style="background:{{ $bg }};" class="hover:opacity-90 transition-colors">
+            <tr data-status="{{ $status }}" data-search="{{ $rowSearch }}" style="background:{{ $bg }};" class="rat-row hover:opacity-90 transition-colors">
                 {{-- Checkbox --}}
                 <td class="border border-gray-200 px-2 py-2 text-center">
                     @if($canImport)
@@ -385,6 +447,10 @@
                         <span class="inline-flex items-center gap-1 bg-orange-100 text-orange-700 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap">
                             <i class="fas fa-copy text-[9px]"></i> Duplikat
                         </span>
+                    @elseif($isAmbiguous)
+                        <span class="inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Ada beberapa sub kegiatan bernama sama di PD ini — sistem tidak menebak. Perbaiki kode/nama di file.">
+                            <i class="fas fa-circle-question text-[9px]"></i> Ambigu
+                        </span>
                     @else
                         <span class="inline-flex items-center gap-0.5 bg-red-100 text-red-700 text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap">
                             <i class="fas fa-xmark text-[9px]"></i> Tidak Cocok
@@ -395,10 +461,24 @@
                 <td class="border border-gray-200 px-2 py-2 text-gray-700 leading-snug">
                     {{ $row['matched_pd_nama'] ?? $row['perangkat_daerah'] ?: '—' }}
                 </td>
+                {{-- Strategi --}}
+                <td class="border border-gray-200 px-2 py-2 leading-snug">
+                    @php $stratShow = $row['matched_strategi'] ?? ($row['strategi_file'] ?? null); @endphp
+                    @if($strategiWarn)
+                        <span class="inline-flex items-center gap-1 text-red-600 font-medium" title="Strategi di file tidak dikenali & program harus dibuat baru — baris ini dilewati. Perbaiki kolom Strategi di file.">
+                            <i class="fas fa-triangle-exclamation text-[10px]"></i> Strategi tak dikenali
+                        </span>
+                        @if(!empty($row['strategi']))<p class="text-[10px] text-gray-400 mt-0.5">file: {{ $row['strategi'] }}</p>@endif
+                    @elseif($stratShow)
+                        <span class="text-gray-700">{{ $stratShow }}</span>
+                    @else
+                        <span class="text-gray-300">—</span>
+                    @endif
+                </td>
                 {{-- Sub Kegiatan file vs DB --}}
                 <td class="border border-gray-200 px-2 py-2 text-gray-700 leading-snug">
-                    @if(!empty($row['kode']) && preg_match('/^\d[\d.]{4,}$/', $row['kode']))
-                        <p class="text-[10px] text-gray-400 font-mono mb-0.5">{{ $row['kode'] }}</p>
+                    @if(!empty($row['kode_sub']))
+                        <p class="text-[10px] text-blue-500 font-mono mb-0.5" title="Kode Sub Kegiatan">{{ $row['kode_sub'] }}</p>
                     @endif
                     {{ $row['sub_kegiatan'] }}
                     @if($isNotFound && !empty($row['kegiatan']))
@@ -414,6 +494,8 @@
                         <span class="text-purple-700"><i class="fas fa-wand-magic-sparkles text-[9px] mr-0.5"></i> Akan dibuat: {{ $row['sub_kegiatan'] }}</span>
                     @elseif($isDuplicate)
                         {{ $row['matched_sk_nama'] ?? '—' }}
+                    @elseif($isAmbiguous)
+                        <span class="text-yellow-700 italic"><i class="fas fa-circle-question text-[9px] mr-0.5"></i> Beberapa sub bernama sama — tak diimport (perbaiki kode/nama di file)</span>
                     @else
                         {{ $row['matched_sk_nama'] ?? '— tidak ditemukan —' }}
                     @endif
@@ -439,7 +521,7 @@
 
             {{-- Grand total --}}
             <tr style="background:#1a5c2a; color:#fff; font-weight:bold;">
-                <td colspan="9" class="border border-green-800 px-3 py-2 text-right text-sm">TOTAL ALOKASI (seluruh file)</td>
+                <td colspan="10" class="border border-green-800 px-3 py-2 text-right text-sm">TOTAL ALOKASI (seluruh file)</td>
                 <td class="border border-green-800 px-2 py-2 text-right font-mono text-yellow-300 whitespace-nowrap">
                     {{ number_format($ratTotalAlokasi, 0, ',', '.') }}
                 </td>
@@ -519,7 +601,34 @@
 @endsection
 
 @push('scripts')
+<style>
+.rat-chip{ background:#fff; color:#374151; border:1px solid #e5e7eb; font-size:.72rem; padding:.35rem .75rem; border-radius:9999px; transition:all .15s; }
+.rat-chip:hover{ background:#f9fafb; }
+.rat-chip-active{ background:#166534; color:#fff; border-color:#166534; }
+</style>
 <script>
+// ── Filter & pencarian preview (sisi klien) ───────────────────────
+var ratCurF = 'all';
+function ratSetFilter(f){
+    ratCurF = f;
+    document.querySelectorAll('.rat-chip').forEach(function(c){ c.classList.toggle('rat-chip-active', c.dataset.f === f); });
+    ratFilter();
+}
+function ratFilter(){
+    var box = document.getElementById('rat-search');
+    var q = (box ? box.value : '').toLowerCase().trim();
+    var shown = 0;
+    document.querySelectorAll('tr.rat-row').forEach(function(tr){
+        var okStatus = (ratCurF === 'all') || (tr.getAttribute('data-status') === ratCurF);
+        var okText   = !q || (tr.getAttribute('data-search') || '').indexOf(q) !== -1;
+        var vis = okStatus && okText;
+        tr.style.display = vis ? '' : 'none';
+        if (vis) shown++;
+    });
+    var c = document.getElementById('rat-filter-count');
+    if (c) c.textContent = shown + ' baris tampil';
+}
+
 // ── File upload ───────────────────────────────────────────────────
 function showFileInfo(input) {
     if (!input.files.length) return;

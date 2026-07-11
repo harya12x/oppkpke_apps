@@ -28,6 +28,116 @@ class OppkpkeController extends Controller
 {
     public function __construct(private OppkpkeService $oppkpkeService) {}
 
+    /** Nama sementara untuk program/kegiatan yang dibuat tanpa nama (dilengkapi operator). */
+    public const PROGRAM_PLACEHOLDER  = 'Program (belum diisi)';
+    public const KEGIATAN_PLACEHOLDER = 'Kegiatan (belum diisi)';
+
+    /**
+     * Ubah nama (dan opsional kode) sebuah program. Untuk operator daerah:
+     * terkunci ke program milik perangkat daerahnya. Admin boleh program mana pun.
+     */
+    public function programUpdate(Request $request, $id)
+    {
+        $user = auth()->user();
+        $validated = $request->validate([
+            'nama_program' => 'required|string|max:500',
+            'kode_program' => 'nullable|string|max:50',
+        ], [
+            'nama_program.required' => 'Nama program wajib diisi.',
+        ]);
+
+        $program = Program::findOrFail($id);
+
+        // Kepemilikan: operator daerah hanya boleh program PD-nya sendiri.
+        if ($user->isDaerah()) {
+            abort_unless(
+                $user->perangkat_daerah_id && $program->perangkat_daerah_id === $user->perangkat_daerah_id,
+                403,
+                'Program ini bukan milik perangkat daerah Anda.'
+            );
+        }
+
+        $nama = trim($validated['nama_program']);
+        $normalize = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+        $dupe = Program::where('perangkat_daerah_id', $program->perangkat_daerah_id)
+            ->where('id', '!=', $program->id)
+            ->get()
+            ->first(fn ($p) => $normalize($p->nama_program) === $normalize($nama));
+        if ($dupe) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sudah ada program lain dengan nama serupa: "' . $dupe->nama_program . '".',
+            ], 422);
+        }
+
+        $lama = $program->nama_program;
+        $program->nama_program = $nama;
+        if ($request->filled('kode_program')) {
+            $program->kode_program = trim($validated['kode_program']);
+        }
+        $program->save();
+
+        AuditLog::record('program.updated', 'Ubah nama program menjadi "' . $nama . '"', $program, [
+            'perangkat_daerah_id' => $program->perangkat_daerah_id,
+            'nama_lama'           => $lama,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Nama program diperbarui.']);
+    }
+
+    /**
+     * Ubah nama (dan opsional kode) sebuah kegiatan. Operator daerah terkunci ke
+     * kegiatan di bawah program milik perangkat daerahnya.
+     */
+    public function kegiatanUpdate(Request $request, $id)
+    {
+        $user = auth()->user();
+        $validated = $request->validate([
+            'nama_kegiatan' => 'required|string|max:500',
+            'kode_kegiatan' => 'nullable|string|max:100',
+        ], [
+            'nama_kegiatan.required' => 'Nama kegiatan wajib diisi.',
+        ]);
+
+        $kegiatan = Kegiatan::with('program')->findOrFail($id);
+        $pdId     = optional($kegiatan->program)->perangkat_daerah_id;
+
+        if ($user->isDaerah()) {
+            abort_unless(
+                $user->perangkat_daerah_id && $pdId === $user->perangkat_daerah_id,
+                403,
+                'Kegiatan ini bukan milik perangkat daerah Anda.'
+            );
+        }
+
+        $nama = trim($validated['nama_kegiatan']);
+        $normalize = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+        $dupe = Kegiatan::where('program_id', $kegiatan->program_id)
+            ->where('id', '!=', $kegiatan->id)
+            ->get()
+            ->first(fn ($k) => $normalize($k->nama_kegiatan) === $normalize($nama));
+        if ($dupe) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sudah ada kegiatan lain dengan nama serupa: "' . $dupe->nama_kegiatan . '".',
+            ], 422);
+        }
+
+        $lama = $kegiatan->nama_kegiatan;
+        $kegiatan->nama_kegiatan = $nama;
+        if ($request->filled('kode_kegiatan')) {
+            $kegiatan->kode = trim($validated['kode_kegiatan']);
+        }
+        $kegiatan->save();
+
+        AuditLog::record('kegiatan.updated', 'Ubah nama kegiatan menjadi "' . $nama . '"', $kegiatan, [
+            'perangkat_daerah_id' => $pdId,
+            'nama_lama'           => $lama,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Nama kegiatan diperbarui.']);
+    }
+
     // =========================================
     // HALAMAN UTAMA
     // =========================================
@@ -134,6 +244,18 @@ class OppkpkeController extends Controller
             ->toArray();
 
         return view('oppkpke.dashboard', compact('stats', 'tahun', 'rekapPerangkat'));
+    }
+
+    /**
+     * Ringkasan otomatis (narasi + sorotan + rekomendasi) — dihitung server,
+     * tanpa AI/LLM. Dipakai kartu "Ringkasan Otomatis" di dashboard.
+     */
+    public function ringkasan(Request $request)
+    {
+        $tahun = (int) $request->input('tahun', date('Y'));
+        $data  = app(\App\Services\BudgetInsightService::class)->narrativeSummary($tahun);
+
+        return response()->json($data);
     }
 
     // =========================================
@@ -457,21 +579,24 @@ class OppkpkeController extends Controller
         $rules = [
             'program_mode'      => 'required|in:existing,new',
             'program_id'        => 'required_if:program_mode,existing|nullable|integer',
-            'strategi_id'       => 'required_if:program_mode,new|nullable|integer|exists:strategi_oppkpke,id',
-            'kode_program'      => 'required_if:program_mode,new|nullable|string|max:50',
-            'nama_program'      => 'required_if:program_mode,new|nullable|string|max:500',
+            // Strategi: operator memilih satu (strategi_id); admin boleh memilih
+            // hingga 3 (strategi_ids[]) — hierarki dibuat di bawah tiap strategi.
+            'strategi_id'       => 'nullable|integer|exists:strategi_oppkpke,id',
+            'strategi_ids'      => 'nullable|array|max:3',
+            'strategi_ids.*'    => 'integer|exists:strategi_oppkpke,id',
+            // Kode & nama program/kegiatan OPSIONAL — boleh dikosongkan, dilengkapi
+            // /diubah operator daerah lewat halaman Input Data.
+            'kode_program'      => 'nullable|string|max:50',
+            'nama_program'      => 'nullable|string|max:500',
             'kegiatan_mode'     => 'required|in:existing,new',
             'kegiatan_id'       => 'required_if:kegiatan_mode,existing|nullable|integer',
             'kode_kegiatan'     => 'nullable|string|max:100',
-            'nama_kegiatan'     => 'required_if:kegiatan_mode,new|nullable|string|max:500',
+            'nama_kegiatan'     => 'nullable|string|max:500',
             'kode_sub'          => 'nullable|string|max:100',
             'nama_sub_kegiatan' => 'required|string|max:500',
         ];
         $messages = [
-            'strategi_id.required_if'    => 'Pilih strategi untuk program baru.',
-            'kode_program.required_if'   => 'Kode program wajib diisi untuk program baru.',
-            'nama_program.required_if'   => 'Nama program wajib diisi untuk program baru.',
-            'nama_kegiatan.required_if'  => 'Nama kegiatan wajib diisi untuk kegiatan baru.',
+            'strategi_ids.max'           => 'Maksimal 3 strategi.',
             'nama_sub_kegiatan.required' => 'Nama sub kegiatan wajib diisi.',
         ];
 
@@ -493,11 +618,23 @@ class OppkpkeController extends Controller
         $programMode  = $validated['program_mode'];
         $kegiatanMode = $programMode === 'new' ? 'new' : $validated['kegiatan_mode'];
 
+        // Daftar strategi untuk program baru: admin bisa banyak (maks 3), operator satu.
+        // Hierarki (program→kegiatan→sub) dibuat di bawah TIAP strategi terpilih.
+        $strategiList = [];
+        if ($programMode === 'new') {
+            $ids = $isAdmin ? ($validated['strategi_ids'] ?? []) : array_filter([$validated['strategi_id'] ?? null]);
+            $ids = array_values(array_unique(array_map('intval', $ids)));
+            if (empty($ids)) {
+                return response()->json(['success' => false, 'message' => 'Pilih minimal satu strategi untuk program baru.'], 422);
+            }
+            $strategiList = array_slice($ids, 0, 3);
+        }
+
         // Normalisasi nama untuk deteksi duplikat (buang tanda baca/spasi ganda).
         $normalize = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
 
         try {
-            $r = DB::transaction(function () use ($validated, $programMode, $kegiatanMode, $normalize, $user, $isAdmin) {
+            $r = DB::transaction(function () use ($validated, $programMode, $kegiatanMode, $strategiList, $normalize, $user, $isAdmin) {
                 $createdProgram = $createdKegiatan = $createdPd = false;
 
                 // ── PERANGKAT DAERAH ─────────────────────────────────────
@@ -531,89 +668,119 @@ class OppkpkeController extends Controller
                     AuditLog::record('perangkat_daerah.created', 'Menambah perangkat daerah "' . $namaPd . '"', $pd);
                 }
 
-                // ── PROGRAM ──────────────────────────────────────────────
-                if ($programMode === 'existing') {
-                    // Kunci kepemilikan: program HARUS milik PD tujuan.
-                    $program = Program::where('id', $validated['program_id'])
-                        ->where('perangkat_daerah_id', $pdId)
-                        ->lockForUpdate()
-                        ->first();
-                    abort_unless($program, 422, 'Program yang dipilih tidak ditemukan pada perangkat daerah tujuan.');
-                } else {
-                    $namaProg = trim($validated['nama_program']);
-                    $kodeProg = trim($validated['kode_program']);
-                    $dupe = Program::where('perangkat_daerah_id', $pdId)->get()->first(fn ($p) =>
-                        ($kodeProg !== '' && strcasecmp(trim($p->kode_program), $kodeProg) === 0) ||
-                        $normalize($p->nama_program) === $normalize($namaProg)
-                    );
-                    if ($dupe) {
-                        abort(422, 'Program serupa sudah ada: "' . $dupe->nama_program . '". Gunakan pilihan "program yang sudah ada".');
+                // Pembuat KEGIATAN (existing/new; nama boleh kosong → placeholder).
+                $makeKegiatan = function ($program) use (&$createdKegiatan, $validated, $kegiatanMode, $normalize) {
+                    if ($kegiatanMode === 'existing') {
+                        $kegiatan = Kegiatan::where('id', $validated['kegiatan_id'])
+                            ->where('program_id', $program->id)
+                            ->first();
+                        abort_unless($kegiatan, 422, 'Kegiatan yang dipilih tidak berada di bawah program tersebut.');
+                        return $kegiatan;
                     }
-                    $program = Program::create([
-                        'strategi_id'         => $validated['strategi_id'],
-                        'perangkat_daerah_id' => $pdId,
-                        'kode_program'        => $kodeProg,
-                        'nama_program'        => $namaProg,
-                        'is_active'           => true,
-                    ]);
-                    $createdProgram = true;
-                }
-
-                // ── KEGIATAN ─────────────────────────────────────────────
-                if ($kegiatanMode === 'existing') {
-                    $kegiatan = Kegiatan::where('id', $validated['kegiatan_id'])
-                        ->where('program_id', $program->id)
-                        ->first();
-                    abort_unless($kegiatan, 422, 'Kegiatan yang dipilih tidak berada di bawah program tersebut.');
-                } else {
-                    $namaKeg = trim($validated['nama_kegiatan']);
-                    $dupeKeg = Kegiatan::where('program_id', $program->id)->get()->first(fn ($k) =>
+                    $namaKeg  = trim($validated['nama_kegiatan'] ?? '');
+                    $blankKeg = ($namaKeg === '');
+                    if ($blankKeg) {
+                        $namaKeg = self::KEGIATAN_PLACEHOLDER;
+                    }
+                    // Placeholder tidak dianggap duplikat (boleh lebih dari satu).
+                    $dupeKeg = $blankKeg ? null : Kegiatan::where('program_id', $program->id)->get()->first(fn ($k) =>
                         $normalize($k->nama_kegiatan) === $normalize($namaKeg)
                     );
                     if ($dupeKeg) {
                         abort(422, 'Kegiatan serupa sudah ada: "' . $dupeKeg->nama_kegiatan . '". Gunakan pilihan "kegiatan yang sudah ada".');
                     }
-                    $kegiatan = Kegiatan::create([
+                    $createdKegiatan = true;
+                    return Kegiatan::create([
                         'program_id'    => $program->id,
                         'kode'          => ($validated['kode_kegiatan'] ?? null) ?: null,
                         'nama_kegiatan' => $namaKeg,
                         'is_active'     => true,
                     ]);
-                    $createdKegiatan = true;
+                };
+
+                // Pembuat SUB KEGIATAN (selalu baru).
+                $makeSub = function ($kegiatan) use ($validated, $normalize) {
+                    $namaSub = trim($validated['nama_sub_kegiatan']);
+                    $dupeSub = SubKegiatan::where('kegiatan_id', $kegiatan->id)->get()->first(fn ($s) =>
+                        $normalize($s->nama_sub_kegiatan) === $normalize($namaSub)
+                    );
+                    if ($dupeSub) {
+                        abort(422, 'Sub kegiatan "' . $dupeSub->nama_sub_kegiatan . '" sudah ada di kegiatan ini.');
+                    }
+                    return SubKegiatan::create([
+                        'kegiatan_id'       => $kegiatan->id,
+                        'kode'              => ($validated['kode_sub'] ?? null) ?: null,
+                        'nama_sub_kegiatan' => $namaSub,
+                        'is_active'         => true,
+                    ]);
+                };
+
+                // ── PROGRAM → KEGIATAN → SUB ─────────────────────────────
+                $subs = [];   // [{program, kegiatan, sub}] — bisa >1 (multi strategi).
+
+                if ($programMode === 'existing') {
+                    $program = Program::where('id', $validated['program_id'])
+                        ->where('perangkat_daerah_id', $pdId)
+                        ->lockForUpdate()
+                        ->first();
+                    abort_unless($program, 422, 'Program yang dipilih tidak ditemukan pada perangkat daerah tujuan.');
+                    $kegiatan = $makeKegiatan($program);
+                    $sub      = $makeSub($kegiatan);
+                    $subs[]   = compact('program', 'kegiatan', 'sub');
+                } else {
+                    $namaProg  = trim($validated['nama_program'] ?? '');
+                    $kodeProg  = trim($validated['kode_program'] ?? '');
+                    $blankName = ($namaProg === '');
+                    if ($blankName) {
+                        $namaProg = self::PROGRAM_PLACEHOLDER;
+                    }
+                    // Buat rantai di bawah TIAP strategi terpilih (maks 3).
+                    foreach ($strategiList as $sid) {
+                        $dupe = Program::where('perangkat_daerah_id', $pdId)->where('strategi_id', $sid)->get()->first(fn ($p) =>
+                            ($kodeProg !== '' && strcasecmp(trim($p->kode_program), $kodeProg) === 0) ||
+                            (! $blankName && $normalize($p->nama_program) === $normalize($namaProg))
+                        );
+                        if ($dupe) {
+                            abort(422, 'Program serupa sudah ada pada salah satu strategi: "' . $dupe->nama_program . '".');
+                        }
+                        // Kode kosong bisa menabrak unique (strategi,pd,kode) bila sudah
+                        // ada program berkode kosong di strategi+PD ini → buat kode unik.
+                        $kodeCreate = $kodeProg;
+                        if ($kodeCreate === '' && Program::where('perangkat_daerah_id', $pdId)->where('strategi_id', $sid)->where('kode_program', '')->exists()) {
+                            $kodeCreate = 'AUTO-' . strtoupper(substr(md5(uniqid('', true)), 0, 8));
+                        }
+                        $program = Program::create([
+                            'strategi_id'         => $sid,
+                            'perangkat_daerah_id' => $pdId,
+                            'kode_program'        => $kodeCreate,
+                            'nama_program'        => $namaProg,
+                            'is_active'           => true,
+                        ]);
+                        $createdProgram = true;
+                        $kegiatan = $makeKegiatan($program);
+                        $sub      = $makeSub($kegiatan);
+                        $subs[]   = compact('program', 'kegiatan', 'sub');
+                    }
                 }
 
-                // ── SUB KEGIATAN (selalu baru) ───────────────────────────
-                $namaSub = trim($validated['nama_sub_kegiatan']);
-                $dupeSub = SubKegiatan::where('kegiatan_id', $kegiatan->id)->get()->first(fn ($s) =>
-                    $normalize($s->nama_sub_kegiatan) === $normalize($namaSub)
-                );
-                if ($dupeSub) {
-                    abort(422, 'Sub kegiatan "' . $dupeSub->nama_sub_kegiatan . '" sudah ada di kegiatan ini.');
-                }
-                $sub = SubKegiatan::create([
-                    'kegiatan_id'       => $kegiatan->id,
-                    'kode'              => ($validated['kode_sub'] ?? null) ?: null,
-                    'nama_sub_kegiatan' => $namaSub,
-                    'is_active'         => true,
-                ]);
-
+                $first = $subs[0];
                 AuditLog::record(
                     'sub_kegiatan.created',
-                    'Menambah sub kegiatan "' . $namaSub . '"',
-                    $sub,
+                    'Menambah ' . count($subs) . ' sub kegiatan "' . $first['sub']->nama_sub_kegiatan . '"',
+                    $first['sub'],
                     [
-                        'perangkat_daerah_id' => $pdId,
-                        'perangkat_daerah'    => $pdNama,
+                        'perangkat_daerah_id'   => $pdId,
+                        'perangkat_daerah'      => $pdNama,
                         'perangkat_daerah_baru' => $createdPd,
-                        'program'             => $program->nama_program,
-                        'program_baru'        => $createdProgram,
-                        'kegiatan'            => $kegiatan->nama_kegiatan,
-                        'kegiatan_baru'       => $createdKegiatan,
-                        'sub_kegiatan'        => $namaSub,
+                        'program'               => $first['program']->nama_program,
+                        'program_baru'          => $createdProgram,
+                        'kegiatan'              => $first['kegiatan']->nama_kegiatan,
+                        'kegiatan_baru'         => $createdKegiatan,
+                        'jumlah_strategi'       => count($subs),
                     ]
                 );
 
-                return compact('program', 'kegiatan', 'sub', 'createdProgram', 'createdKegiatan', 'createdPd', 'pdNama');
+                return compact('subs', 'createdProgram', 'createdKegiatan', 'createdPd', 'pdNama');
             });
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             // abort(...) di dalam transaksi → rollback otomatis, pesan ramah ke klien.
@@ -629,13 +796,17 @@ class OppkpkeController extends Controller
         if ($r['createdKegiatan']) $parts[] = 'Kegiatan';
         $parts[] = 'Sub Kegiatan';
 
+        $n     = count($r['subs']);
+        $first = $r['subs'][0];
+        $extra = $n > 1 ? " di {$n} strategi" : '';
+
         return response()->json([
             'success'      => true,
-            'message'      => implode(', ', $parts) . ' berhasil ditambahkan untuk ' . $r['pdNama'] . '.',
+            'message'      => implode(', ', $parts) . ' berhasil ditambahkan untuk ' . $r['pdNama'] . $extra . '.',
             'sub_kegiatan' => [
-                'id'   => $r['sub']->id,
-                'nama' => $r['sub']->nama_sub_kegiatan,
-                'path' => $r['pdNama'] . ' → ' . $r['program']->nama_program . ' → ' . $r['kegiatan']->nama_kegiatan . ' → ' . $r['sub']->nama_sub_kegiatan,
+                'id'   => $first['sub']->id,
+                'nama' => $first['sub']->nama_sub_kegiatan,
+                'path' => $r['pdNama'] . ' → ' . $first['program']->nama_program . ' → ' . $first['kegiatan']->nama_kegiatan . ' → ' . $first['sub']->nama_sub_kegiatan,
             ],
         ]);
     }
@@ -813,6 +984,8 @@ class OppkpkeController extends Controller
             'not_found'  => $coll->where('status', 'not_found')->count(),
             'duplicate'  => $coll->where('status', 'duplicate')->count(),
             'new_sk'     => $coll->where('status', 'new_sk')->count(),
+            'ambiguous'  => $coll->where('status', 'ambiguous')->count(),
+            'strategi_warn' => $coll->where('status', 'not_found')->filter(fn ($r) => ! empty($r['strategi_warn']))->count(),
             'update'     => $coll->where('status', 'matched')->where('has_existing', true)->count(),
             'new_record' => $coll->where('status', 'matched')->where('has_existing', false)->count(),
         ];
@@ -1003,15 +1176,16 @@ class OppkpkeController extends Controller
             if ($colE !== '') $currentProgram  = $colE;
             if ($colF !== '') $currentKegiatan = $colF;
 
-            // Prefer the more specific SK kode extracted from col G over the program kode in col D
-            $effectiveKode = $skKodeFromG ?? $currentKode;
-
+            // Kode PROGRAM diambil dari kolom D (bukan dari prefix nama sub) agar
+            // pencocokan/pembuatan program benar. Kode SUB KEGIATAN diambil dari
+            // prefix nama di kolom G lalu disimpan ke sub_kegiatan.kode.
             $alokasi = $this->parseCellNumber($sheet->getCell('K' . $r)->getValue(), $colK);
 
             $rows[] = [
                 'strategi'                 => $currentStrategi,
                 'perangkat_daerah'         => $currentPd,
-                'kode'                     => $effectiveKode,
+                'kode'                     => $currentKode,          // kode PROGRAM (kolom D)
+                'kode_sub'                 => $skKodeFromG ?? '',    // kode SUB KEGIATAN (prefix kolom G)
                 'program'                  => $currentProgram,
                 'kegiatan'                 => $currentKegiatan,
                 'sub_kegiatan'             => $colG,
@@ -1147,17 +1321,60 @@ class OppkpkeController extends Controller
         return $rows;
     }
 
+    /**
+     * Konversi nilai sel menjadi angka dengan aman untuk format Indonesia MAUPUN
+     * Inggris. Sel Excel bertipe angka asli dipakai langsung (paling akurat).
+     * Untuk teks: pemisah desimal ditentukan dari tanda paling KANAN sehingga
+     * "1.500.000" = 1.500.000 dan "1.500.000,50" = 1.500.000,5 (tidak lagi 100× keliru).
+     *
+     * PENTING: is_numeric TIDAK dipakai untuk string — karena "1.500" (ribuan
+     * Indonesia) akan salah dianggap 1,5 oleh PHP.
+     */
     private function parseCellNumber($rawVal, string $strFallback): float
     {
-        if (is_numeric($rawVal)) return (float) $rawVal;
-        $s = trim((string) $strFallback);
-        if ($s === '' || $s === '-') return 0.0;
-        $s = preg_replace('/[Rp\s\t]/', '', $s);
-        $s = str_replace(',', '', $s); // remove English comma thousands
-        $parts = explode('.', $s);
-        if (count($parts) > 2) return (float) implode('', $parts); // Indonesian thousands dots
-        if (count($parts) === 2 && strlen($parts[1]) === 3) return (float) implode('', $parts);
-        return (float) $s;
+        // Sel Excel bertipe angka asli → langsung (bukan string).
+        if (is_int($rawVal) || is_float($rawVal)) {
+            return (float) $rawVal;
+        }
+
+        $s = (string) $rawVal;
+        if (trim($s) === '') {
+            $s = $strFallback;
+        }
+        // Sisakan hanya digit, titik, koma, minus.
+        $s = preg_replace('/[^\d.,\-]/', '', trim((string) $s));
+        if ($s === '' || $s === '-') {
+            return 0.0;
+        }
+
+        $neg = str_starts_with($s, '-');
+        $s   = ltrim($s, '-');
+
+        $hasDot   = str_contains($s, '.');
+        $hasComma = str_contains($s, ',');
+
+        if ($hasDot && $hasComma) {
+            // Pemisah desimal = simbol paling kanan.
+            if (strrpos($s, ',') > strrpos($s, '.')) {
+                $s = str_replace('.', '', $s);   // ID: titik ribuan
+                $s = str_replace(',', '.', $s);  // ID: koma desimal
+            } else {
+                $s = str_replace(',', '', $s);   // EN: koma ribuan, titik desimal
+            }
+        } elseif ($hasComma) {
+            $after = substr($s, strrpos($s, ',') + 1);
+            $s = (substr_count($s, ',') === 1 && strlen($after) >= 1 && strlen($after) <= 2)
+                ? str_replace(',', '.', $s)      // desimal (mis. 1500,50)
+                : str_replace(',', '', $s);      // ribuan (mis. 1,500,000)
+        } elseif ($hasDot) {
+            $after = substr($s, strrpos($s, '.') + 1);
+            if (! (substr_count($s, '.') === 1 && strlen($after) >= 1 && strlen($after) <= 2)) {
+                $s = str_replace('.', '', $s);   // ribuan (mis. 1.500 / 1.500.000)
+            }
+            // else: biarkan sebagai desimal (mis. 1500.50)
+        }
+
+        return ($neg ? -1 : 1) * (float) $s;
     }
 
     private function matchRowsToSubKegiatan(array $rawRows, int $tahun, int $semester): array
@@ -1165,173 +1382,160 @@ class OppkpkeController extends Controller
         $allSk = SubKegiatan::with(['kegiatan.program.perangkatDaerah', 'kegiatan.program.strategi'])
             ->where('is_active', true)->get();
 
-        // Build sub_kegiatan lookup maps
-        $skByName     = $allSk->groupBy(fn($sk) => $this->normalizeSkName($sk->nama_sub_kegiatan));
-        $skByKodeName = $allSk->groupBy(fn($sk) =>
-            (optional($sk->kegiatan?->program)->kode_program ?? '') . '||' . $this->normalizeSkName($sk->nama_sub_kegiatan)
-        );
+        $skByName = $allSk->groupBy(fn($sk) => $this->normalizeSkName($sk->nama_sub_kegiatan));
 
-        // Build kegiatan lookup map for Tier 4 (auto-create new SK)
+        // Peta kegiatan untuk auto-create sub baru (Tier 4/5).
         $allKegiatan    = Kegiatan::with(['program.perangkatDaerah', 'program.strategi'])->get();
         $kegiatanByName = $allKegiatan->groupBy(fn($k) => $this->normalizeSkName($k->nama_kegiatan));
 
         $existingIds = LaporanOppkpke::where('tahun', $tahun)->pluck('sub_kegiatan_id')->flip();
 
-        $result     = [];
-        $rowNum     = 0;
-        $seenSkIds  = []; // track already-matched SK IDs to detect duplicate file rows
+        // Normalisasi PD (buang tanda baca) — konsisten dgn forceCreateSkFromRow.
+        $pdNorm = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+        // Cocok PD: baris yang menyebut PD WAJIB sama PD-nya; baris tanpa PD tak membatasi.
+        $pdMatch = function ($skPdName, string $rowPd) use ($pdNorm) {
+            if ($rowPd === '') return true;
+            $a = $pdNorm((string) ($skPdName ?? ''));
+            $b = $pdNorm($rowPd);
+            if ($a === '' || $b === '') return false;
+            return $a === $b || str_contains($a, $b) || str_contains($b, $a);
+        };
+        $skPd  = fn ($sk) => optional($sk->kegiatan?->program?->perangkatDaerah)->nama;
+        $kegPd = fn ($k)  => optional($k->program?->perangkatDaerah)->nama;
+
+        // Strategi aktif (untuk resolusi & tampilan) + program (untuk cek "program baru").
+        $activeStrategi = StrategiOppkpke::where('is_active', true)->get();
+        $progsByPd = Program::with('perangkatDaerah')->get(['id', 'perangkat_daerah_id', 'kode_program', 'nama_program'])
+            ->groupBy(fn ($p) => $pdNorm((string) (optional($p->perangkatDaerah)->nama ?? '')));
+
+        // Apakah program utk baris ini AKAN dibuat baru? (bila ya → butuh strategi valid)
+        $needsNewProgram = function (string $rowPd, string $progName, string $kode) use ($progsByPd, $pdNorm) {
+            if (trim($progName) === '') return false; // tanpa nama program → tak membuat program (pakai yang ada)
+            $pn = $pdNorm($progName);
+            $rp = $pdNorm($rowPd);
+            $cands = collect();
+            foreach ($progsByPd as $key => $ps) {
+                if ($rp !== '' && ($key === $rp || ($key !== '' && (str_contains($key, $rp) || str_contains($rp, $key))))) {
+                    $cands = $cands->merge($ps);
+                }
+            }
+            $exists = $cands->contains(function ($p) use ($pn, $kode, $pdNorm) {
+                $npn = $pdNorm((string) $p->nama_program);
+                return $npn === $pn
+                    || ($pn !== '' && (str_contains($npn, $pn) || str_contains($pn, $npn)))
+                    || ($kode !== '' && strcasecmp(trim((string) $p->kode_program), $kode) === 0);
+            });
+            return ! $exists;
+        };
+
+        $result    = [];
+        $rowNum    = 0;
+        $seenSkIds = []; // SK yang sudah dicocokkan → deteksi baris duplikat di file
+
+        // Helper penambah baris hasil (mengurangi duplikasi & risiko salah tulis).
+        $push = function (array $raw, int $rowNum, string $status, $sk, $keg) use (&$result, $existingIds, $skPd, $kegPd) {
+            $result[] = array_merge($raw, [
+                'row_num'          => $rowNum,
+                'status'           => $status,
+                'sub_kegiatan_id'  => $sk?->id,
+                'kegiatan_id'      => $keg?->id,
+                'matched_sk_nama'  => $sk ? $sk->nama_sub_kegiatan : ($keg ? '[Baru] ' . $raw['sub_kegiatan'] : null),
+                'matched_pd_nama'  => $sk ? $skPd($sk) : ($keg ? $kegPd($keg) : null),
+                'matched_strategi' => $sk
+                    ? optional($sk->kegiatan?->program?->strategi)->nama
+                    : ($keg ? optional($keg->program?->strategi)->nama : null),
+                'has_existing'     => $sk ? isset($existingIds[$sk->id]) : false,
+            ]);
+        };
+
+        // Pemilih kegiatan dari kandidat (PD-aware, dipertajam kode).
+        $pickKegiatan = function ($cands, string $rowPd, string $kode) use ($pdMatch, $kegPd) {
+            $cands = $cands->filter(fn ($k) => $pdMatch($kegPd($k), $rowPd))->values();
+            if ($cands->isEmpty()) return null;
+            if ($cands->count() === 1) return $cands->first();
+            if ($kode) {
+                $byKode = $cands->filter(fn ($k) => optional($k->program)->kode_program === $kode);
+                if ($byKode->count() === 1) return $byKode->first();
+            }
+            return $cands->first();
+        };
 
         foreach ($rawRows as $raw) {
             $rowNum++;
             $normalized = $this->normalizeSkName($raw['sub_kegiatan']);
             $kode       = trim($raw['kode']);
-            $pdName     = strtolower(trim($raw['perangkat_daerah']));
+            $kodeSub    = trim((string) ($raw['kode_sub'] ?? ''));
+            $rowPd      = trim($raw['perangkat_daerah']);
 
-            $matched = null;
+            // Resolusi strategi dari file (kode/nama) untuk tampilan preview.
+            $stratObj = StrategiOppkpke::resolveFromText($raw['strategi'] ?? '', $activeStrategi);
+            $raw['strategi_file'] = $stratObj?->nama;
 
-            // Tier 1: Exact normalized name match
-            $candidates = $skByName->get($normalized, collect());
+            $matched   = null;
+            $ambiguous = false;
+
+            // ── Cocokkan sub kegiatan (WAJIB cocok PD bila baris menyebut PD) ──
+            $candidates = $skByName->get($normalized, collect())
+                ->filter(fn ($sk) => $pdMatch($skPd($sk), $rowPd))->values();
+
             if ($candidates->count() === 1) {
                 $matched = $candidates->first();
             } elseif ($candidates->count() > 1) {
-                if ($kode) {
-                    $byKode = $candidates->filter(fn($sk) => optional($sk->kegiatan?->program)->kode_program === $kode);
-                    $matched = $byKode->first();
+                // Pertajam: KODE SUB KEGIATAN (paling spesifik) → lalu kode program.
+                if ($kodeSub !== '') {
+                    $bySub = $candidates->filter(fn ($sk) => trim((string) $sk->kode) !== '' && strcasecmp(trim((string) $sk->kode), $kodeSub) === 0);
+                    if ($bySub->count() === 1) $matched = $bySub->first();
                 }
-                if (!$matched && $pdName) {
-                    $byPd = $candidates->filter(fn($sk) =>
-                        strtolower(optional($sk->kegiatan?->program?->perangkatDaerah)->nama ?? '') === $pdName
-                    );
-                    $matched = $byPd->first() ?? $candidates->first();
+                if (! $matched && $kode !== '') {
+                    $byKode = $candidates->filter(fn ($sk) => optional($sk->kegiatan?->program)->kode_program === $kode);
+                    if ($byKode->count() === 1) $matched = $byKode->first();
                 }
-                if (!$matched) $matched = $candidates->first();
+                if (! $matched) $ambiguous = true;   // jangan menebak — biar admin putuskan
             }
 
-            // Tier 2: Kode + name composite key
-            if (!$matched && $kode) {
-                $matched = $skByKodeName->get("{$kode}||{$normalized}", collect())->first();
-            }
-
-            // Tier 3: Fuzzy prefix match (min 20 chars)
-            if (!$matched && strlen($normalized) >= 20) {
+            // Fuzzy prefix (PD-aware) — hanya bila belum cocok & belum ambigu.
+            if (! $matched && ! $ambiguous && strlen($normalized) >= 20) {
                 $prefix = substr($normalized, 0, 25);
-                $fuzzy  = $allSk->filter(fn($sk) =>
-                    str_contains($this->normalizeSkName($sk->nama_sub_kegiatan), $prefix) ||
-                    str_contains($prefix, substr($this->normalizeSkName($sk->nama_sub_kegiatan), 0, 25))
-                );
-                if ($fuzzy->count() === 1) {
-                    $matched = $fuzzy->first();
-                } elseif ($fuzzy->count() > 1 && $pdName) {
-                    $narrowed = $fuzzy->filter(fn($sk) =>
-                        strtolower(optional($sk->kegiatan?->program?->perangkatDaerah)->nama ?? '') === $pdName
-                    );
-                    $matched = $narrowed->first() ?? $fuzzy->first();
-                }
+                $fuzzy  = $allSk->filter(fn ($sk) =>
+                    $pdMatch($skPd($sk), $rowPd) && (
+                        str_contains($this->normalizeSkName($sk->nama_sub_kegiatan), $prefix) ||
+                        str_contains($prefix, substr($this->normalizeSkName($sk->nama_sub_kegiatan), 0, 25))
+                    )
+                )->values();
+                if ($fuzzy->count() === 1) $matched = $fuzzy->first();
+                elseif ($fuzzy->count() > 1) $ambiguous = true;
             }
 
             if ($matched) {
-                // Duplicate: same sub_kegiatan already matched by an earlier row in this file
-                if (isset($seenSkIds[$matched->id])) {
-                    $result[] = array_merge($raw, [
-                        'row_num'         => $rowNum,
-                        'status'          => 'duplicate',
-                        'sub_kegiatan_id' => $matched->id,
-                        'kegiatan_id'     => null,
-                        'matched_sk_nama' => $matched->nama_sub_kegiatan,
-                        'matched_pd_nama' => optional($matched->kegiatan?->program?->perangkatDaerah)->nama,
-                        'matched_strategi'=> optional($matched->kegiatan?->program?->strategi)->nama,
-                        'has_existing'    => isset($existingIds[$matched->id]),
-                    ]);
-                    continue;
-                }
-
-                $seenSkIds[$matched->id] = true;
-                $result[] = array_merge($raw, [
-                    'row_num'         => $rowNum,
-                    'status'          => 'matched',
-                    'sub_kegiatan_id' => $matched->id,
-                    'kegiatan_id'     => null,
-                    'matched_sk_nama' => $matched->nama_sub_kegiatan,
-                    'matched_pd_nama' => optional($matched->kegiatan?->program?->perangkatDaerah)->nama,
-                    'matched_strategi'=> optional($matched->kegiatan?->program?->strategi)->nama,
-                    'has_existing'    => isset($existingIds[$matched->id]),
-                ]);
+                $status = isset($seenSkIds[$matched->id]) ? 'duplicate' : 'matched';
+                if ($status === 'matched') $seenSkIds[$matched->id] = true;
+                $push($raw, $rowNum, $status, $matched, null);
                 continue;
             }
 
-            // Tier 4: Sub kegiatan name matches a kegiatan name → will auto-create new SK
-            $kegCandidates = $kegiatanByName->get($normalized, collect());
-            if ($kegCandidates->isNotEmpty()) {
-                // Narrow by PD if ambiguous
-                $keg = $kegCandidates->count() === 1
-                    ? $kegCandidates->first()
-                    : ($pdName
-                        ? ($kegCandidates->filter(fn($k) =>
-                            strtolower(optional($k->program?->perangkatDaerah)->nama ?? '') === $pdName
-                          )->first() ?? $kegCandidates->first())
-                        : $kegCandidates->first());
-
-                $result[] = array_merge($raw, [
-                    'row_num'         => $rowNum,
-                    'status'          => 'new_sk',
-                    'sub_kegiatan_id' => null,
-                    'kegiatan_id'     => $keg->id,
-                    'matched_sk_nama' => '[Baru] ' . $raw['sub_kegiatan'],
-                    'matched_pd_nama' => optional($keg->program?->perangkatDaerah)->nama,
-                    'matched_strategi'=> optional($keg->program?->strategi)->nama,
-                    'has_existing'    => false,
-                ]);
+            if ($ambiguous) {
+                $push($raw, $rowNum, 'ambiguous', null, null);
                 continue;
             }
 
-            // Tier 5: Look up kegiatan by file's kegiatan column name (for project-specific SK names)
-            if (!empty($raw['kegiatan'])) {
-                $normalizedKeg5   = $this->normalizeSkName($raw['kegiatan']);
-                $keg5Candidates   = $kegiatanByName->get($normalizedKeg5, collect());
+            // Tier 4: nama sub == nama kegiatan → buat sub baru di kegiatan itu (PD-aware).
+            $keg = $pickKegiatan($kegiatanByName->get($normalized, collect()), $rowPd, $kode);
 
-                if ($keg5Candidates->isNotEmpty()) {
-                    $keg5 = $keg5Candidates->count() === 1
-                        ? $keg5Candidates->first()
-                        : ($kode
-                            ? ($keg5Candidates->filter(fn($k) =>
-                                optional($k->program)->kode_program === $kode
-                              )->first()
-                              ?? ($pdName
-                                    ? ($keg5Candidates->filter(fn($k) =>
-                                        strtolower(optional($k->program?->perangkatDaerah)->nama ?? '') === $pdName
-                                      )->first() ?? $keg5Candidates->first())
-                                    : $keg5Candidates->first()))
-                            : ($pdName
-                                ? ($keg5Candidates->filter(fn($k) =>
-                                    strtolower(optional($k->program?->perangkatDaerah)->nama ?? '') === $pdName
-                                  )->first() ?? $keg5Candidates->first())
-                                : $keg5Candidates->first()));
-
-                    $result[] = array_merge($raw, [
-                        'row_num'         => $rowNum,
-                        'status'          => 'new_sk',
-                        'sub_kegiatan_id' => null,
-                        'kegiatan_id'     => $keg5->id,
-                        'matched_sk_nama' => '[Baru] ' . $raw['sub_kegiatan'],
-                        'matched_pd_nama' => optional($keg5->program?->perangkatDaerah)->nama,
-                        'matched_strategi'=> optional($keg5->program?->strategi)->nama,
-                        'has_existing'    => false,
-                    ]);
-                    continue;
-                }
+            // Tier 5: cari kegiatan lewat kolom "kegiatan" file (PD-aware).
+            if (! $keg && ! empty($raw['kegiatan'])) {
+                $keg = $pickKegiatan($kegiatanByName->get($this->normalizeSkName($raw['kegiatan']), collect()), $rowPd, $kode);
             }
 
-            // Truly unmatched
-            $result[] = array_merge($raw, [
-                'row_num'         => $rowNum,
-                'status'          => 'not_found',
-                'sub_kegiatan_id' => null,
-                'kegiatan_id'     => null,
-                'matched_sk_nama' => null,
-                'matched_pd_nama' => null,
-                'matched_strategi'=> null,
-                'has_existing'    => false,
-            ]);
+            if ($keg) {
+                $push($raw, $rowNum, 'new_sk', null, $keg);
+                continue;
+            }
+
+            // not_found → forceCreateSkFromRow akan membangun hierarki di PD yang benar.
+            // Tandai bila program HARUS dibuat baru namun strategi file tak dikenali
+            // (baris tsb akan DILEWATI saat eksekusi — tidak ditebak ke strategi lain).
+            $raw['strategi_warn'] = ! $stratObj && $needsNewProgram($rowPd, (string) ($raw['program'] ?? ''), $kode);
+            $push($raw, $rowNum, 'not_found', null, null);
         }
 
         return $result;

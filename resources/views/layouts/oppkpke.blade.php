@@ -105,39 +105,50 @@
             {{-- ── Menu untuk DAERAH (disederhanakan) ──────────── --}}
             @if(auth()->user()->isDaerah())
 
+            @menuon('daerah','dashboard')
             <a href="{{ route('oppkpke.dashboard') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.dashboard') ? 'nav-active' : '' }}">
                 <i class="fas fa-house w-5 text-center flex-shrink-0 text-yellow-300"></i>
                 <span class="text-sm font-medium">Beranda</span>
             </a>
+            @endmenuon
 
+            @menuon('daerah','laporan')
             <a href="{{ route('oppkpke.laporan.index') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.laporan.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-pen w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm font-medium">Input Data</span>
             </a>
+            @endmenuon
 
+            @menuon('daerah','report')
             <a href="{{ route('oppkpke.report') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.report') ? 'nav-active' : '' }}">
                 <i class="fas fa-table-list w-5 text-center flex-shrink-0 text-blue-300"></i>
                 <span class="text-sm font-medium">Rekap Laporan</span>
             </a>
+            @endmenuon
 
+            @menuon('daerah','chat')
             <a href="{{ route('oppkpke.chat.index') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-headset w-5 text-center flex-shrink-0 text-cyan-300"></i>
                 <span class="text-sm font-medium">Chat Support IT</span>
                 <span data-chat-unread class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 {{ $chatUnread ? '' : 'hidden' }}">{{ $chatUnread }}</span>
             </a>
+            @endmenuon
 
+            @menuon('daerah','panduan')
             <a href="{{ route('oppkpke.panduan') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.panduan') ? 'nav-active' : '' }}">
                 <i class="fas fa-book-open w-5 text-center flex-shrink-0 text-blue-300"></i>
                 <span class="text-sm font-medium">Panduan Input Laporan</span>
             </a>
+            @endmenuon
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
 
+            @menuon('daerah','pic')
             <a href="{{ route('oppkpke.pic.form') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.pic.form') ? 'nav-active' : '' }}">
                 <i class="fas fa-id-card w-5 text-center flex-shrink-0 {{ auth()->user()->hasPicIdentity() ? 'text-green-300' : 'text-yellow-300' }}"></i>
@@ -146,12 +157,15 @@
                     <span class="ml-auto bg-yellow-400 text-yellow-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">Wajib</span>
                 @endunless
             </a>
+            @endmenuon
 
+            @menuon('daerah','change_password')
             <a href="{{ route('oppkpke.profile.change-password') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.profile.change-password') ? 'nav-active' : '' }}">
                 <i class="fas fa-key w-5 text-center flex-shrink-0 text-orange-300"></i>
                 <span class="text-sm font-medium">Ganti Password</span>
             </a>
+            @endmenuon
 
             {{-- ── Menu untuk TIM IT (support inbox) ───────────── --}}
             @elseif(auth()->user()->isItTeam())
@@ -187,6 +201,18 @@
                 <span class="text-sm font-medium">Audit Log</span>
             </a>
 
+            <a href="{{ route('admin.menu-settings.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('admin.menu-settings.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-sliders w-5 text-center flex-shrink-0 text-teal-300"></i>
+                <span class="text-sm font-medium">Kelola Menu</span>
+            </a>
+
+            <a href="{{ route('admin.strategi.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('admin.strategi.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-diagram-project w-5 text-center flex-shrink-0 text-orange-300"></i>
+                <span class="text-sm font-medium">Kelola Strategi</span>
+            </a>
+
             <div class="border-t border-blue-700 my-2 mx-5"></div>
 
             <a href="{{ route('oppkpke.profile.change-password') }}"
@@ -198,47 +224,67 @@
             {{-- ── Menu untuk MASTER (lengkap) ─────────────────── --}}
             @else
 
+            @menuon('master','dashboard')
             <a href="{{ route('oppkpke.dashboard') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.dashboard') ? 'nav-active' : '' }}">
                 <i class="fas fa-chart-pie w-5 text-center flex-shrink-0"></i>
                 <span class="text-sm">Dashboard</span>
             </a>
+            @endmenuon
 
+            @menuon('master','laporan')
             <a href="{{ route('oppkpke.laporan.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.laporan.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-pen w-5 text-center flex-shrink-0"></i>
                 <span class="text-sm">Input Laporan</span>
             </a>
+            @endmenuon
 
+            @menuon('master','statistik')
             <a href="{{ route('oppkpke.statistik') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.statistik') ? 'nav-active' : '' }}">
                 <i class="fas fa-chart-bar w-5 text-center flex-shrink-0"></i>
                 <span class="text-sm">Statistik</span>
             </a>
+            @endmenuon
 
+            @menuon('master','matrix')
             <a href="{{ route('oppkpke.matrix', ['tahun' => request('tahun', date('Y'))]) }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.matrix') ? 'nav-active' : '' }}">
                 <i class="fas fa-table w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm">Matriks</span>
                 <span class="ml-auto text-[10px] bg-green-500 text-white rounded px-1.5 py-0.5 font-semibold">21 Kol</span>
             </a>
+            @endmenuon
 
+            @menuon('master','import')
             <a href="{{ route('oppkpke.import') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.import') || request()->routeIs('oppkpke.import.preview') || request()->routeIs('oppkpke.import.execute') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-import w-5 text-center flex-shrink-0 text-amber-300"></i>
                 <span class="text-sm">Import OPPKPKE</span>
                 <span class="ml-auto text-[10px] bg-blue-500 text-white rounded px-1.5 py-0.5 font-semibold">21K</span>
             </a>
+            @endmenuon
 
+            @menuon('master','import_rat')
             <a href="{{ route('oppkpke.import.rat') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.import.rat*') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-arrow-up w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm">Import RAT</span>
                 <span class="ml-auto text-[10px] bg-green-600 text-white rounded px-1.5 py-0.5 font-semibold">18K</span>
             </a>
+            @endmenuon
 
+            @menuon('master','import_hierarki')
+            <a href="{{ route('oppkpke.import.hierarki') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.import.hierarki*') ? 'nav-active' : '' }}">
+                <i class="fas fa-sitemap w-5 text-center flex-shrink-0 text-teal-300"></i>
+                <span class="text-sm">Import Hierarki</span>
+            </a>
+            @endmenuon
+
+            @menuon('master','export')
             <div class="border-t border-blue-700 my-2 mx-5"></div>
-
             <p class="px-5 pb-1 text-blue-400 text-xs uppercase tracking-wider">Export</p>
             <a href="{{ route('oppkpke.export.excel', request()->query()) }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition">
@@ -250,9 +296,11 @@
                 <i class="fas fa-file-pdf w-5 text-center flex-shrink-0 text-red-400"></i>
                 <span class="text-sm">Export PDF</span>
             </a>
+            @endmenuon
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
             <p class="px-5 pb-1 text-blue-400 text-xs uppercase tracking-wider">Administrasi</p>
+            @menuon('master','users')
             <a href="{{ route('admin.users.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.users.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-users-gear w-5 text-center flex-shrink-0 text-purple-300"></i>
@@ -264,28 +312,42 @@
                     </span>
                 @endif
             </a>
+            @endmenuon
+            @menuon('master','announcements')
             <a href="{{ route('oppkpke.announcements.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.announcements.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-bullhorn w-5 text-center flex-shrink-0 text-amber-300"></i>
                 <span class="text-sm">Pengumuman</span>
             </a>
+            @endmenuon
+            @menuon('master','chat')
             <a href="{{ route('oppkpke.chat.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
                 <span class="text-sm">Pantau Chat</span>
             </a>
+            @endmenuon
+            @menuon('master','sessions')
             <a href="{{ route('admin.sessions.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.sessions.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-user-clock w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm">Sesi Login</span>
             </a>
+            @endmenuon
+            <a href="{{ route('admin.strategi.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('admin.strategi.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-diagram-project w-5 text-center flex-shrink-0 text-orange-300"></i>
+                <span class="text-sm">Kelola Strategi</span>
+            </a>
 
             <div class="border-t border-blue-700 my-2 mx-5"></div>
+            @menuon('master','panduan')
             <a href="{{ route('oppkpke.panduan') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.panduan') ? 'nav-active' : '' }}">
                 <i class="fas fa-book-open w-5 text-center flex-shrink-0 text-blue-300"></i>
                 <span class="text-sm">Panduan Penggunaan</span>
             </a>
+            @endmenuon
 
             @endif
 

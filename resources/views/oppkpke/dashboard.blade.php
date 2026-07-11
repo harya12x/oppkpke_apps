@@ -67,6 +67,32 @@
         </div>
     </div>
 
+    {{-- ── RINGKASAN OTOMATIS (Top Management & Tim IT) ─────────
+         Narasi ringan dihitung server (tanpa AI/LLM) — cepat & akurat. --}}
+    @if(auth()->user()->isMaster() || auth()->user()->isItTeam())
+    <div class="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 md:p-6 text-white">
+            <div class="flex items-center justify-between gap-3 mb-4">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-wand-magic-sparkles"></i></div>
+                    <div class="min-w-0">
+                        <h4 class="font-semibold text-sm md:text-base">Ringkasan Otomatis</h4>
+                        <p class="text-indigo-100 text-[11px] truncate">Rangkuman capaian anggaran tahun {{ $tahun }}</p>
+                    </div>
+                </div>
+                <button onclick="rkLoad(true)" id="rk-btn"
+                        class="bg-white/20 hover:bg-white/30 border border-white/30 text-xs md:text-sm font-medium px-3 py-2 rounded-lg transition flex items-center gap-1.5 flex-shrink-0">
+                    <i class="fas fa-rotate"></i> <span class="hidden sm:inline">Segarkan</span>
+                </button>
+            </div>
+
+            <div id="rk-body" class="bg-white/10 rounded-lg p-4 space-y-3">
+                <p class="text-sm text-indigo-100"><i class="fas fa-spinner fa-spin mr-1"></i> Menyiapkan ringkasan...</p>
+            </div>
+        </div>
+    </div>
+    @endif
+
     {{-- ── CHARTS ──────────────────────────────────────────── --}}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <div class="bg-white rounded-xl shadow-sm border p-4 md:p-6">
@@ -432,5 +458,45 @@ new Chart(document.getElementById('chartSemester'), {
         scales: { y: { beginAtZero: true, ticks: { callback: function(v) { return fmtM(v); }, font: { size: 10 } } } }
     }
 });
+</script>
+
+{{-- ── RINGKASAN OTOMATIS (tanpa AI/LLM) ─────────────────────── --}}
+<script>
+(function(){
+    var body = document.getElementById('rk-body');
+    if (!body) return; // hanya untuk master/it_team
+
+    var rkTahun = {{ (int) $tahun }};
+    var rkUrl   = '{{ route('oppkpke.ringkasan') }}';
+    function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+    window.rkLoad = function(fromBtn){
+        var btn = document.getElementById('rk-btn');
+        if (fromBtn && btn){ btn.disabled = true; }
+        body.innerHTML = '<p class="text-sm text-indigo-100"><i class="fas fa-spinner fa-spin mr-1"></i> Menyiapkan ringkasan...</p>';
+        $.get(rkUrl, { tahun: rkTahun })
+            .done(function(res){
+                var html = '<p class="text-sm leading-relaxed">' + esc(res.ringkasan || '') + '</p>';
+                if (res.sorotan && res.sorotan.length){
+                    html += '<div><p class="text-[11px] uppercase tracking-wide text-indigo-200 mb-1 mt-1">Sorotan</p>'
+                          + '<ul class="text-sm space-y-1 list-disc ml-4">'
+                          + res.sorotan.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('')
+                          + '</ul></div>';
+                }
+                if (res.rekomendasi && res.rekomendasi.length){
+                    html += '<div><p class="text-[11px] uppercase tracking-wide text-indigo-200 mb-1">Rekomendasi</p>'
+                          + '<ul class="text-sm space-y-1 list-disc ml-4">'
+                          + res.rekomendasi.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('')
+                          + '</ul></div>';
+                }
+                html += '<p class="text-[10px] text-indigo-200/70"><i class="fas fa-circle-info mr-1"></i>Ringkasan dihitung otomatis dari data laporan; angka selengkapnya pada kartu & tabel di dashboard.</p>';
+                body.innerHTML = html;
+            })
+            .fail(function(){ body.innerHTML = '<p class="text-sm text-amber-200"><i class="fas fa-triangle-exclamation mr-1"></i>Gagal memuat ringkasan.</p>'; })
+            .always(function(){ if (btn) btn.disabled = false; });
+    };
+
+    rkLoad(false); // muat otomatis saat halaman dibuka
+})();
 </script>
 @endpush

@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\View\Composers\AnnouncementComposer;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\View;
@@ -28,6 +29,12 @@ class AppServiceProvider extends ServiceProvider
 
         // Banner pengumuman/maintenance pada layout utama (semua role kecuali Tim IT).
         View::composer('layouts.oppkpke', AnnouncementComposer::class);
+
+        // @menuon('role','key') ... @endmenuon — tampilkan blok menu hanya bila
+        // menu tsb aktif (dikelola Tim IT via Kelola Menu). Default: aktif.
+        Blade::if('menuon', function (string $role, string $key) {
+            return app(\App\Services\MenuManager::class)->isEnabled($role, $key);
+        });
 
         // OWASP A07 / MITRE T1110 (Brute Force):
         // 5 attempts per minute keyed by email + IP, hard cap of 15 per minute by IP alone.
