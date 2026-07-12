@@ -114,6 +114,18 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
         ->middleware('role:master,it_team')->name('ringkasan');
 
     // --------------------------------------------------
+    // PRESENTASI TOP MANAGEMENT — halaman eksekutif (KPI, grafik, analisis).
+    // Khusus Top Management & Tim IT.
+    // --------------------------------------------------
+    Route::get('/presentasi', [OppkpkeController::class, 'presentasi'])
+        ->middleware('role:master,it_team')->name('presentasi');
+
+    // --------------------------------------------------
+    // MENU (mobile) — daftar seluruh menu sesuai role.
+    // --------------------------------------------------
+    Route::get('/menu', [OppkpkeController::class, 'menu'])->name('menu');
+
+    // --------------------------------------------------
     // IMPORT DATA — OPPKPKE 21 kolom
     // --------------------------------------------------
     Route::get('/import', [OppkpkeController::class, 'importPage'])->name('import');
