@@ -12,12 +12,46 @@
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <style>
         [x-cloak]  { display: none !important; }
-        .loader    { border-top-color: #3b82f6; animation: spin 1s linear infinite; }
+        .loader    { border-top-color: #475569; animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .nav-active { background-color: rgba(255,255,255,0.15); border-right: 4px solid #fbbf24; }
+        .nav-active { background-color: rgba(255,255,255,0.12); border-right: 4px solid #cbd5e1; }
 
         /* Smooth sidebar on mobile */
         #main-sidebar { will-change: transform; }
+
+        /* ── Skeleton loader (shimmer) ─────────────────────────────── */
+        .skeleton {
+            position: relative; overflow: hidden;
+            background: #e8ecf1; border-radius: 0.5rem;
+        }
+        .skeleton::after {
+            content: ''; position: absolute; inset: 0;
+            transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.65), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+        @media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } }
+
+        /* ── Bottom navigation (mobile) ────────────────────────────── */
+        #bottom-nav {
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            box-shadow: 0 -1px 8px rgba(15, 23, 42, 0.06);
+        }
+        #bottom-nav a, #bottom-nav button {
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Ruang bawah agar konten tak tertutup bottom-nav di mobile */
+        @media (max-width: 1023px) {
+            body.has-bottom-nav { padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
+        }
+
+        /* Palet natural: fokus keterbacaan untuk pengguna lanjut usia */
+        :root {
+            --c-ink: #1f2937;       /* teks utama */
+            --c-muted: #64748b;     /* teks sekunder */
+            --c-line: #e5e7eb;      /* garis */
+        }
 
         /* Select2 full-width override */
         .select2-container { width: 100% !important; }
@@ -32,7 +66,7 @@
     </style>
     @stack('styles')
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen has-bottom-nav">
 
     {{-- ── Backdrop (mobile sidebar) ──────────────────────────────── --}}
     <div id="sidebar-backdrop"
@@ -42,8 +76,7 @@
 
     {{-- ── Sidebar ─────────────────────────────────────────────────── --}}
     <aside id="main-sidebar"
-           class="fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-blue-900 to-blue-800 text-white shadow-xl z-50 flex flex-col
-                  transform transition-transform duration-300 ease-in-out -translate-x-full lg:translate-x-0"
+           class="fixed left-0 top-0 h-full w-64 bg-gradient-to-b from-blue-900 to-blue-800 text-white shadow-xl z-50 hidden lg:flex flex-col"
            role="navigation"
            aria-label="Menu utama">
 
@@ -170,6 +203,13 @@
             {{-- ── Menu untuk TIM IT (support inbox) ───────────── --}}
             @elseif(auth()->user()->isItTeam())
 
+            <a href="{{ route('oppkpke.presentasi') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.presentasi') ? 'nav-active' : '' }}">
+                <i class="fas fa-chart-line w-5 text-center flex-shrink-0 text-blue-200"></i>
+                <span class="text-sm font-medium">Ikhtisar Eksekutif</span>
+                <span class="ml-auto text-[10px] bg-white/15 text-blue-100 rounded px-1.5 py-0.5 font-medium">Pimpinan</span>
+            </a>
+
             <a href="{{ route('oppkpke.chat.index') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.chat.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-comments w-5 text-center flex-shrink-0 text-cyan-300"></i>
@@ -232,6 +272,15 @@
             </a>
             @endmenuon
 
+            @menuon('master','presentasi')
+            <a href="{{ route('oppkpke.presentasi') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.presentasi') ? 'nav-active' : '' }}">
+                <i class="fas fa-chart-line w-5 text-center flex-shrink-0 text-blue-200"></i>
+                <span class="text-sm">Ikhtisar Eksekutif</span>
+                <span class="ml-auto text-[10px] bg-white/15 text-blue-100 rounded px-1.5 py-0.5 font-medium">Pimpinan</span>
+            </a>
+            @endmenuon
+
             @menuon('master','laporan')
             <a href="{{ route('oppkpke.laporan.index') }}"
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.laporan.*') ? 'nav-active' : '' }}">
@@ -253,7 +302,7 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.matrix') ? 'nav-active' : '' }}">
                 <i class="fas fa-table w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm">Matriks</span>
-                <span class="ml-auto text-[10px] bg-green-500 text-white rounded px-1.5 py-0.5 font-semibold">21 Kol</span>
+                <span class="ml-auto text-[10px] bg-white/15 text-blue-100 rounded px-1.5 py-0.5 font-medium">21 Kol</span>
             </a>
             @endmenuon
 
@@ -262,7 +311,7 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.import') || request()->routeIs('oppkpke.import.preview') || request()->routeIs('oppkpke.import.execute') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-import w-5 text-center flex-shrink-0 text-amber-300"></i>
                 <span class="text-sm">Import OPPKPKE</span>
-                <span class="ml-auto text-[10px] bg-blue-500 text-white rounded px-1.5 py-0.5 font-semibold">21K</span>
+                <span class="ml-auto text-[10px] bg-white/15 text-blue-100 rounded px-1.5 py-0.5 font-medium">21K</span>
             </a>
             @endmenuon
 
@@ -271,7 +320,7 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.import.rat*') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-arrow-up w-5 text-center flex-shrink-0 text-green-300"></i>
                 <span class="text-sm">Import RAT</span>
-                <span class="ml-auto text-[10px] bg-green-600 text-white rounded px-1.5 py-0.5 font-semibold">18K</span>
+                <span class="ml-auto text-[10px] bg-white/15 text-blue-100 rounded px-1.5 py-0.5 font-medium">18K</span>
             </a>
             @endmenuon
 
@@ -373,13 +422,12 @@
         <header class="bg-white shadow-sm border-b sticky top-0 z-30">
             <div class="flex items-center gap-2 px-4 py-3">
 
-                {{-- Hamburger – mobile only --}}
-                <button id="sidebar-toggle"
-                        onclick="openSidebar()"
-                        class="lg:hidden flex-shrink-0 p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition"
-                        aria-label="Buka menu navigasi">
-                    <i class="fas fa-bars text-lg"></i>
-                </button>
+                {{-- Brand ringkas (mobile only) — pengganti hamburger --}}
+                <a href="{{ route('oppkpke.dashboard') }}"
+                   class="lg:hidden flex-shrink-0 w-9 h-9 rounded-lg bg-slate-700 text-white flex items-center justify-center"
+                   aria-label="Beranda">
+                    <i class="fas fa-hand-holding-heart text-sm"></i>
+                </a>
 
                 <div class="flex-1 min-w-0">
                     <h2 class="text-base md:text-lg font-semibold text-gray-800 truncate">
@@ -431,6 +479,11 @@
             @yield('content')
         </div>
     </main>
+
+    {{-- ── Bottom navigation (mobile) ───────────────────────────────── --}}
+    @auth
+        @include('partials.bottom-nav')
+    @endauth
 
     {{-- ── Generic Picker Modal (reused by all views) ──────────── --}}
     <div id="modalGP" class="fixed inset-0 z-[300] hidden items-center justify-center p-4">

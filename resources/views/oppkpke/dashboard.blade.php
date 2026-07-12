@@ -99,7 +99,7 @@
             <h4 class="font-semibold text-gray-800 mb-3 text-sm md:text-base">
                 <i class="fas fa-chart-bar mr-2 text-blue-500"></i>Alokasi vs Realisasi per Strategi
             </h4>
-            <div class="h-56 md:h-72">
+            <div class="h-56 md:h-72 relative"><div class="chart-skeleton skeleton absolute inset-0"></div>
                 <canvas id="chartStrategiComparison"></canvas>
             </div>
         </div>
@@ -108,7 +108,7 @@
             <h4 class="font-semibold text-gray-800 mb-3 text-sm md:text-base">
                 <i class="fas fa-chart-pie mr-2 text-green-500"></i>Distribusi Alokasi Anggaran
             </h4>
-            <div class="h-56 md:h-72">
+            <div class="h-56 md:h-72 relative"><div class="chart-skeleton skeleton absolute inset-0"></div>
                 <canvas id="chartAlokasiPie"></canvas>
             </div>
         </div>
@@ -118,7 +118,7 @@
         <h4 class="font-semibold text-gray-800 mb-3 text-sm md:text-base">
             <i class="fas fa-building mr-2 text-purple-500"></i>Top 10 Realisasi per Perangkat Daerah
         </h4>
-        <div class="h-64 md:h-80">
+        <div class="h-64 md:h-80 relative"><div class="chart-skeleton skeleton absolute inset-0"></div>
             <canvas id="chartPerangkatDaerah"></canvas>
         </div>
     </div>
@@ -128,7 +128,7 @@
             <h4 class="font-semibold text-gray-800 mb-3 text-sm md:text-base">
                 <i class="fas fa-calendar mr-2 text-orange-500"></i>Realisasi Semester 1 vs Semester 2
             </h4>
-            <div class="h-56 md:h-72">
+            <div class="h-56 md:h-72 relative"><div class="chart-skeleton skeleton absolute inset-0"></div>
                 <canvas id="chartSemester"></canvas>
             </div>
         </div>
@@ -338,12 +338,15 @@ var strategiRealisasi = statsPerStrategi.map(function(s) { return +(s.realisasi)
 var strategiSem1      = statsPerStrategi.map(function(s) { return +(s.sem1)      || 0; });
 var strategiSem2      = statsPerStrategi.map(function(s) { return +(s.sem2)      || 0; });
 
+// Palet natural (redup, kontras cukup) — nyaman untuk pengguna lanjut usia.
 var c = {
-    blue:   'rgba(59,130,246,0.8)',
-    green:  'rgba(34,197,94,0.8)',
-    orange: 'rgba(249,115,22,0.8)',
-    purple: 'rgba(168,85,247,0.8)',
+    blue:   'rgba(71,85,105,0.85)',    /* slate  */
+    green:  'rgba(15,118,110,0.85)',   /* teal   */
+    orange: 'rgba(180,83,9,0.85)',     /* amber tua */
+    purple: 'rgba(79,70,229,0.85)',    /* indigo */
 };
+if (window.Chart) { Chart.defaults.color = '#475569'; }
+function hideChartSkeletons() { document.querySelectorAll('.chart-skeleton').forEach(function (el) { el.remove(); }); }
 
 function fmtM(v) {
     var n = parseFloat(v);
@@ -458,6 +461,9 @@ new Chart(document.getElementById('chartSemester'), {
         scales: { y: { beginAtZero: true, ticks: { callback: function(v) { return fmtM(v); }, font: { size: 10 } } } }
     }
 });
+
+// Semua grafik selesai digambar → lepas skeleton.
+hideChartSkeletons();
 </script>
 
 {{-- ── RINGKASAN OTOMATIS (tanpa AI/LLM) ─────────────────────── --}}

@@ -29,6 +29,7 @@ class MenuManager
         return [
             'master' => [
                 'dashboard'     => 'Dashboard',
+                'presentasi'    => 'Ikhtisar Eksekutif',
                 'laporan'       => 'Input Laporan',
                 'statistik'     => 'Statistik',
                 'matrix'        => 'Matriks',

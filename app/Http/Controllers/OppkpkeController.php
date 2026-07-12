@@ -258,6 +258,34 @@ class OppkpkeController extends Controller
         return response()->json($data);
     }
 
+    /**
+     * Halaman Menu (khusus mobile) — daftar seluruh menu sesuai role,
+     * menggantikan sidebar geser di perangkat kecil.
+     */
+    public function menu()
+    {
+        return view('oppkpke.menu');
+    }
+
+    /**
+     * Halaman Ikhtisar Eksekutif — dashboard untuk pimpinan berbasis data nyata.
+     */
+    public function presentasi(Request $request)
+    {
+        $tahunTersedia = LaporanOppkpke::query()
+            ->select('tahun')->distinct()->orderByDesc('tahun')->pluck('tahun')->all();
+        $tahun = (int) $request->input('tahun', $tahunTersedia[0] ?? date('Y'));
+
+        $data = app(\App\Services\BudgetInsightService::class)
+            ->presentationData($tahun, $request->boolean('fresh'));
+
+        return view('oppkpke.presentasi', [
+            'd'             => $data,
+            'tahun'         => $tahun,
+            'tahunTersedia' => $tahunTersedia,
+        ]);
+    }
+
     // =========================================
     // EXPLORER DATA
     // =========================================
