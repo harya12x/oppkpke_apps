@@ -31,6 +31,7 @@ class MenuManager
                 'dashboard'     => 'Dashboard',
                 'presentasi'    => 'Ikhtisar Eksekutif',
                 'laporan'       => 'Input Laporan',
+                'pagu'          => 'Kelola Pagu Anggaran',
                 'statistik'     => 'Statistik',
                 'matrix'        => 'Matriks',
                 'import'         => 'Import OPPKPKE',
@@ -46,6 +47,7 @@ class MenuManager
             'daerah' => [
                 'dashboard'       => 'Beranda',
                 'laporan'         => 'Input Data',
+                'pagu'            => 'Kelola Pagu Anggaran',
                 'report'          => 'Rekap Laporan',
                 'chat'            => 'Chat Support IT',
                 'panduan'         => 'Panduan',

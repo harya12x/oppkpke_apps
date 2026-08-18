@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\HierarkiImportController;
 use App\Http\Controllers\OppkpkeController;
+use App\Http\Controllers\PaguController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SessionController;
 use App\Http\Controllers\UserController;
@@ -69,6 +70,15 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
         // batch HARUS terdaftar sebelum {id} — kalau tidak, "batch" akan tertangkap sebagai {id}.
         Route::delete('/laporan/batch', [OppkpkeController::class, 'batchDestroy'])->name('laporan.batch-destroy');
         Route::delete('/laporan/{id}', [OppkpkeController::class, 'destroy'])->name('laporan.destroy');
+    });
+
+    // --------------------------------------------------
+    // KELOLA PAGU ANGGARAN — ubah pagu banyak sub kegiatan sekaligus.
+    // Operator Daerah (terkunci ke PD-nya) & Admin Master (pilih PD).
+    // --------------------------------------------------
+    Route::middleware('role:master,daerah')->group(function () {
+        Route::get('/pagu',  [PaguController::class, 'index'])->name('pagu.index');
+        Route::post('/pagu', [PaguController::class, 'store'])->middleware('throttle:60,1')->name('pagu.store');
     });
 
     // --------------------------------------------------

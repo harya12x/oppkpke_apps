@@ -64,19 +64,172 @@
         </div>
     </div>
 
-    {{-- ── 1. EXECUTIVE SUMMARY (narasi) ─────────────────────────── --}}
-    <div class="pres-card p-5 md:p-6 shadow">
-        <div class="flex items-center gap-2 mb-2">
-            <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-100 text-blue-600">
-                <i class="fas fa-file-lines"></i>
-            </span>
-            <h2 class="text-lg font-bold text-gray-800">Ringkasan Eksekutif</h2>
-            @php $kat = $d['kategori']; @endphp
-            <span class="ml-auto text-xs font-semibold px-2.5 py-1 rounded-full {{ $k['persentase'] >= 50 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700' }}">
-                Capaian {{ $kat }}
-            </span>
+    {{-- ── 1. IKHTISAR EKSEKUTIF ──────────────── --}}
+    @php
+        $ik = $d['ikhtisar'];
+        // Panel rincian Output & Outcome disembunyikan; set true untuk menampilkannya kembali.
+        $tampilOutputOutcome = false;
+        // Kelas ditulis utuh (bukan dirakit) agar terdeteksi pemindai Tailwind.
+        $tone = [
+            'kritis'    => ['band' => 'from-red-700 to-red-500',     'chip' => 'bg-white/15 text-white border-white/30',
+                            'teks' => 'text-red-600',   'bar' => 'bg-red-500',   'lembut' => 'bg-red-50 border-red-100'],
+            'perhatian' => ['band' => 'from-amber-600 to-amber-400', 'chip' => 'bg-white/15 text-white border-white/30',
+                            'teks' => 'text-amber-600', 'bar' => 'bg-amber-500', 'lembut' => 'bg-amber-50 border-amber-100'],
+            'baik'      => ['band' => 'from-blue-700 to-blue-500',   'chip' => 'bg-white/15 text-white border-white/30',
+                            'teks' => 'text-blue-600',  'bar' => 'bg-blue-500',  'lembut' => 'bg-blue-50 border-blue-100'],
+            'optimal'   => ['band' => 'from-green-700 to-green-500', 'chip' => 'bg-white/15 text-white border-white/30',
+                            'teks' => 'text-green-600', 'bar' => 'bg-green-500', 'lembut' => 'bg-green-50 border-green-100'],
+        ][$ik['status']['level']] ?? ['band' => 'from-slate-700 to-slate-500', 'chip' => 'bg-white/15 text-white border-white/30',
+                                      'teks' => 'text-slate-600', 'bar' => 'bg-slate-500', 'lembut' => 'bg-slate-50 border-slate-100'];
+    @endphp
+
+    <div class="pres-card shadow overflow-hidden">
+
+        {{-- Kepala: status capaian dalam satu tarikan napas --}}
+        <div class="bg-gradient-to-r {{ $tone['band'] }} text-white px-5 py-4 md:px-6">
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/20">
+                    <i class="fas {{ $ik['status']['ikon'] }}"></i>
+                </span>
+                <div>
+                    <h2 class="text-lg font-bold leading-tight">Ringkasan Capaian {{ $tahun }}</h2>
+                    <p class="text-[11px] text-white/80">Status penyerapan anggaran &amp; hal yang perlu perhatian pimpinan</p>
+                </div>
+                <span class="ml-auto text-xs font-bold px-3 py-1.5 rounded-full border {{ $tone['chip'] }} whitespace-nowrap">
+                    {{ $ik['status']['label'] }} · {{ number_format($ik['persen'], 1, ',', '.') }}%
+                </span>
+            </div>
+
+            <p class="text-sm md:text-[15px] leading-relaxed mt-3 text-white/95">{{ $ik['headline'] }}</p>
+            <p class="text-[11px] text-white/75 mt-1"><i class="fas fa-circle-info mr-1"></i>{{ $ik['status']['arti'] }}</p>
+
+            {{-- Bilah serapan: posisi capaian terhadap titik wajar 50% --}}
+            <div class="mt-4">
+                <div class="w-full bg-white/25 rounded-full h-2.5 relative">
+                    <div class="bg-white h-2.5 rounded-full" style="width: {{ min(max($ik['persen'], 0.6), 100) }}%"></div>
+                    <div class="absolute top-[-4px] h-[18px] w-0.5 bg-white/80" style="left: 50%" title="Titik wajar paruh tahun"></div>
+                </div>
+                <div class="flex justify-between text-[10px] text-white/80 mt-1">
+                    <span>Pagu {{ $rpM($ik['alokasi']) }}</span>
+                    <span>Titik wajar 50%</span>
+                    <span>Tersalur {{ $rpM($ik['realisasi']) }}</span>
+                </div>
+            </div>
         </div>
-        <p class="text-sm md:text-[15px] leading-relaxed text-gray-700">{{ $d['narasi'] }}</p>
+
+        {{-- Isi: output vs outcome bersanding.
+             Disembunyikan atas permintaan — ubah $tampilOutputOutcome di atas
+             menjadi true bila panel ini ingin ditampilkan lagi. --}}
+        @if($tampilOutputOutcome)
+        <div class="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+
+            {{-- OUTPUT --}}
+            <div class="p-5 md:p-6">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center text-xs"><i class="fas fa-gears"></i></span>
+                    <h3 class="text-sm font-bold text-gray-800">Output — Apa yang dikerjakan</h3>
+                </div>
+                <ul class="space-y-3">
+                    @foreach($ik['output'] as $o)
+                        <li class="flex items-start gap-3">
+                            <i class="fas {{ $o['ikon'] }} text-slate-400 w-4 mt-1 text-center"></i>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-baseline gap-2 flex-wrap">
+                                    <span class="text-lg font-bold text-gray-800 leading-none">{{ $o['nilai'] }}</span>
+                                    <span class="text-xs text-gray-500">{{ $o['dari'] }}</span>
+                                </div>
+                                <p class="text-xs font-semibold text-gray-600 mt-0.5">{{ $o['label'] }}</p>
+                                <p class="text-[11px] text-gray-500 leading-snug mt-0.5">{{ $o['ket'] }}</p>
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
+
+            {{-- OUTCOME --}}
+            <div class="p-5 md:p-6">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-7 h-7 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center text-xs"><i class="fas fa-seedling"></i></span>
+                    <h3 class="text-sm font-bold text-gray-800">Outcome — Apa hasilnya bagi masyarakat</h3>
+                </div>
+                <ul class="space-y-3">
+                    @foreach($ik['outcome'] as $o)
+                        <li class="flex items-start gap-3">
+                            <i class="fas {{ $o['ikon'] }} text-teal-600/70 w-4 mt-1 text-center"></i>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-baseline gap-2 flex-wrap">
+                                    <span class="text-lg font-bold text-gray-800 leading-none">{{ $o['nilai'] }}</span>
+                                    <span class="text-xs text-gray-500">{{ $o['dari'] }}</span>
+                                </div>
+                                <p class="text-xs font-semibold text-gray-600 mt-0.5">{{ $o['label'] }}</p>
+                                <p class="text-[11px] text-gray-500 leading-snug mt-0.5">{{ $o['ket'] }}</p>
+                            </div>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
+        </div>
+        @endif
+
+        {{-- Baca cepat: yang berjalan baik vs yang perlu perhatian --}}
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-px bg-gray-100 border-t border-gray-100">
+            <div class="bg-white p-5 md:p-6">
+                <h4 class="text-xs font-bold text-green-700 mb-2"><i class="fas fa-circle-check mr-1"></i> Yang sudah berjalan baik</h4>
+                <ul class="space-y-1.5">
+                    @foreach($ik['positif'] as $p)
+                        <li class="text-xs text-gray-700 leading-relaxed flex gap-2">
+                            <i class="fas fa-angle-right text-green-500 mt-0.5"></i><span>{{ $p }}</span>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
+            <div class="bg-white p-5 md:p-6">
+                <h4 class="text-xs font-bold {{ $tone['teks'] }} mb-2"><i class="fas fa-triangle-exclamation mr-1"></i> Yang perlu perhatian</h4>
+                <ul class="space-y-1.5">
+                    @foreach($ik['perhatian'] as $p)
+                        <li class="text-xs text-gray-700 leading-relaxed flex gap-2">
+                            <i class="fas fa-angle-right {{ $tone['teks'] }} mt-0.5"></i><span>{{ $p }}</span>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
+        </div>
+
+        {{-- Dasar kesimpulan: seberapa lengkap data pendukungnya --}}
+        @php $kl = $ik['kelengkapan']; @endphp
+        <div class="border-t border-gray-100 p-5 md:p-6 bg-gray-50/70">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <h4 class="text-xs font-bold text-gray-700"><i class="fas fa-clipboard-list text-gray-400 mr-1"></i> Kekuatan data pendukung</h4>
+                <span class="text-xs font-bold {{ $kl['persen'] >= 70 ? 'text-green-600' : ($kl['persen'] >= 40 ? 'text-amber-600' : 'text-red-600') }}">
+                    {{ number_format($kl['persen'], 1, ',', '.') }}% terisi
+                </span>
+                <span class="text-[11px] text-gray-500">dari {{ number_format($kl['baris'], 0, ',', '.') }} baris laporan</span>
+                <span class="ml-auto text-[11px] text-gray-400">Makin lengkap kolom ini, makin tajam ukuran outcome-nya.</span>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                @foreach($kl['detail'] as $f)
+                    <div>
+                        <div class="flex items-baseline justify-between gap-1">
+                            <span class="text-[11px] text-gray-600 truncate" title="{{ $f['label'] }}">{{ $f['label'] }}</span>
+                            <span class="text-[11px] font-semibold text-gray-700">{{ number_format($f['persen'], 0, ',', '.') }}%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                            <div class="{{ $f['persen'] >= 70 ? 'bg-green-500' : ($f['persen'] >= 40 ? 'bg-amber-500' : 'bg-red-400') }} h-1.5 rounded-full"
+                                 style="width: {{ min(max($f['persen'], 1.5), 100) }}%"></div>
+                        </div>
+                        <p class="text-[10px] text-gray-400 mt-0.5">{{ number_format($f['terisi'], 0, ',', '.') }} baris</p>
+                    </div>
+                @endforeach
+            </div>
+
+            <details class="mt-4 group">
+                <summary class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 select-none">
+                    <i class="fas fa-chevron-right text-[10px] mr-1 group-open:rotate-90 transition-transform"></i>
+                    Baca narasi ringkasan versi lengkap
+                </summary>
+                <p class="text-sm leading-relaxed text-gray-700 mt-2 pl-4 border-l-2 border-gray-200">{{ $d['narasi'] }}</p>
+            </details>
+        </div>
     </div>
 
     {{-- ── 2. KPI CARDS ──────────────────────────────────────────── --}}

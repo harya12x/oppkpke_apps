@@ -1637,31 +1637,90 @@ class OppkpkeController extends Controller
     public function exportExcel(Request $request)
     {
         $tahun    = $request->get('tahun', date('Y'));
-        $semester = $request->get('semester', 2);
+        $semester = (int) $request->get('semester', 2);
         $rows     = $this->buildMatrixRows($tahun, $request);
 
-        $semLabel  = $semester == 1 ? 'I (JANUARI - JUNI)' : 'II (JULI - DESEMBER)';
+        // ── Susun ulang baris datar → Strategi ▸ Perangkat Daerah ▸ Program ▸ Kegiatan
+        $tree = [];
+        $cur  = null;
+        foreach ($rows as $row) {
+            if (($row['_type'] ?? '') === 'strategi_header') {
+                if ($cur) $tree[] = $cur;
+                $cur = ['label' => $row['label'], 'kode' => $row['kode'] ?? '', 'dinas' => []];
+                continue;
+            }
+            if (!$cur) continue;
+            $namaDinas = trim((string) $row['perangkat_daerah']) !== ''
+                ? trim((string) $row['perangkat_daerah'])
+                : '(Tanpa Perangkat Daerah)';
+            $cur['dinas'][$namaDinas][] = $row;
+        }
+        if ($cur) $tree[] = $cur;
+
+        foreach ($tree as &$strat) {
+            ksort($strat['dinas'], SORT_NATURAL | SORT_FLAG_CASE);
+            foreach ($strat['dinas'] as &$list) {
+                usort($list, function ($a, $b) {
+                    return [$a['kode'], $a['program'], $a['kegiatan'], $a['sub_kegiatan']]
+                       <=> [$b['kode'], $b['program'], $b['kegiatan'], $b['sub_kegiatan']];
+                });
+            }
+            unset($list);
+        }
+        unset($strat);
+
+        $sum = fn(array $list, string $key) => array_sum(array_map(fn($r) => (float) ($r[$key] ?? 0), $list));
+        $rp  = fn($v) => 'Rp ' . number_format((float) $v, 0, ',', '.');
+        $pct = fn($num, $den) => $den > 0 ? round(($num / $den) * 100, 1) : 0;
+
+        $semLabel    = $semester == 1 ? 'I (JANUARI - JUNI)' : 'II (JULI - DESEMBER)';
+        $moneyFmt    = '#,##0;[Red]-#,##0;"-"';
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Matriks OPPKPKE');
+        $sheet->setShowGridlines(false);
+        $sheet->getSheetView()->setZoomScale(85);
 
-        // ── Title rows ──────────────────────────────────────────
+        // ── Judul ───────────────────────────────────────────────
         $sheet->mergeCells('A1:U1');
         $sheet->setCellValue('A1', 'LAPORAN OPTIMALISASI PELAKSANAAN PENGENTASAN KEMISKINAN DAN PENGHAPUSAN KEMISKINAN EKSTREM (OPPKPKE)');
         $sheet->mergeCells('A2:U2');
         $sheet->setCellValue('A2', "SEMESTER {$semLabel} TAHUN {$tahun}");
 
-        foreach (['A1', 'A2'] as $cell) {
-            $sheet->getStyle($cell)->applyFromArray([
-                'font'      => ['bold' => true, 'size' => 12],
-                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            ]);
+        $metaParts = [];
+        if ($request->filled('strategi_id')) {
+            $metaParts[] = 'Strategi: ' . (optional(StrategiOppkpke::find($request->strategi_id))->nama ?? '-');
         }
-        $sheet->getRowDimension(1)->setRowHeight(22);
-        $sheet->getRowDimension(2)->setRowHeight(18);
+        if ($request->filled('perangkat_daerah_id')) {
+            $metaParts[] = 'Perangkat Daerah: ' . (optional(PerangkatDaerah::find($request->perangkat_daerah_id))->nama ?? '-');
+        }
+        $metaParts[] = 'Satuan nilai: Rupiah (Rp)';
+        $metaParts[] = 'Dicetak: ' . now()->format('d-m-Y H:i');
 
-        // ── Header row 1 (group labels) ─────────────────────────
-        $hRow = 4;
+        $sheet->mergeCells('A3:U3');
+        $sheet->setCellValue('A3', implode('   •   ', $metaParts));
+
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FF1E3A5F']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FF1E3A5F']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getStyle('A3')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF64748B']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(26);
+        $sheet->getRowDimension(2)->setRowHeight(20);
+        $sheet->getRowDimension(3)->setRowHeight(16);
+        $sheet->getRowDimension(4)->setRowHeight(8); // margin atas tabel
+
+        // ── Header tabel ────────────────────────────────────────
+        $hRow     = 5;
+        $hRow2    = $hRow + 1;
+        $hRow3    = $hRow2 + 1;
         $headers1 = [
             'A' => 'No', 'B' => 'Strategi OPPKPKE', 'C' => 'Perangkat Daerah',
             'D' => 'Kode', 'E' => 'Program', 'F' => 'Kegiatan', 'G' => 'Sub Kegiatan',
@@ -1669,130 +1728,337 @@ class OppkpkeController extends Controller
             'L' => 'Sumber Pembiayaan', 'M' => 'Sifat Bantuan', 'N' => 'Lokasi',
             'O' => 'Jumlah Sasaran Penerima Manfaat', 'P' => 'Besaran Manfaat',
             'Q' => 'Jenis Bantuan', 'R' => 'Durasi Pemberian Bantuan',
-            'S' => 'Realisasi',
+            'S' => 'Realisasi (Rp)',
         ];
 
-        // Merge cols for "Aktifitas Real" (H-J) and "Realisasi" (S-U)
         $sheet->mergeCells("H{$hRow}:J{$hRow}");
         $sheet->mergeCells("S{$hRow}:U{$hRow}");
-
-        // Single-col headers span 2 rows
         foreach (['A','B','C','D','E','F','G','K','L','M','N','O','P','Q','R'] as $col) {
-            $sheet->mergeCells("{$col}{$hRow}:{$col}" . ($hRow + 1));
+            $sheet->mergeCells("{$col}{$hRow}:{$col}{$hRow2}");
         }
-
         foreach ($headers1 as $col => $label) {
             $sheet->setCellValue("{$col}{$hRow}", $label);
         }
-
-        // ── Header row 2 (sub-labels) ───────────────────────────
-        $hRow2 = $hRow + 1;
         $sheet->setCellValue("H{$hRow2}", 'Langsung');
         $sheet->setCellValue("I{$hRow2}", 'Tidak Langsung');
         $sheet->setCellValue("J{$hRow2}", 'Penunjang');
-        $sheet->setCellValue("S{$hRow2}", 'Sem.1');
-        $sheet->setCellValue("T{$hRow2}", 'Sem.2');
+        $sheet->setCellValue("S{$hRow2}", 'Sem. 1');
+        $sheet->setCellValue("T{$hRow2}", 'Sem. 2');
         $sheet->setCellValue("U{$hRow2}", 'Total');
 
-        // Number row below headers
-        $hRow3 = $hRow2 + 1;
         foreach (range('A', 'U') as $i => $col) {
             $sheet->setCellValue("{$col}{$hRow3}", $i + 1);
         }
 
-        // Style header block
-        $headerRange = "A{$hRow}:U{$hRow3}";
-        $sheet->getStyle($headerRange)->applyFromArray([
+        $sheet->getStyle("A{$hRow}:U{$hRow2}")->applyFromArray([
             'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
             'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFB0C4DE']]],
         ]);
-        $sheet->getRowDimension($hRow)->setRowHeight(28);
+        $sheet->getStyle("A{$hRow3}:U{$hRow3}")->applyFromArray([
+            'font'      => ['size' => 8, 'color' => ['argb' => 'FF1E3A5F']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDCE6F1']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFB0C4DE']]],
+        ]);
+        $sheet->getRowDimension($hRow)->setRowHeight(30);
         $sheet->getRowDimension($hRow2)->setRowHeight(22);
-        $sheet->getRowDimension($hRow3)->setRowHeight(16);
+        $sheet->getRowDimension($hRow3)->setRowHeight(14);
 
-        // ── Data rows ────────────────────────────────────────────
+        // ── Isi tabel ───────────────────────────────────────────
         $dataStartRow = $hRow3 + 1;
         $currentRow   = $dataStartRow;
-        $no           = 1;
-        $strategiIdx  = -1;
 
-        foreach ($rows as $row) {
-            if ($row['_type'] === 'strategi_header') {
-                $strategiIdx++;
+        $thinBorder   = ['borderStyle' => Border::BORDER_THIN,   'color' => ['argb' => 'FFD5DDE6']];
+        $mediumBorder = ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF9DB2C8']];
+
+        $grand     = ['alokasi' => 0.0, 'sem1' => 0.0, 'sem2' => 0.0, 'total' => 0.0, 'sub' => 0, 'dinas' => 0];
+        $ringkasan = [];
+
+        foreach ($tree as $strat) {
+            if (empty($strat['dinas'])) continue;
+            $allStratRows = array_merge(...array_values($strat['dinas']));
+            $sAlokasi = $sum($allStratRows, 'alokasi_anggaran');
+            $sSem1    = $sum($allStratRows, 'realisasi_sem1');
+            $sSem2    = $sum($allStratRows, 'realisasi_sem2');
+            $sTotal   = $sum($allStratRows, 'realisasi_total');
+
+            // ── Band Strategi ───────────────────────────────────
+            $judulStrat = trim(($strat['kode'] ? "STRATEGI {$strat['kode']} — " : '') . strtoupper($strat['label']));
+            $sheet->mergeCells("A{$currentRow}:U{$currentRow}");
+            $sheet->setCellValue("A{$currentRow}", $judulStrat
+                . '     |     ' . count($strat['dinas']) . ' Perangkat Daerah'
+                . '  •  ' . count($allStratRows) . ' Sub Kegiatan'
+                . '  •  Alokasi ' . $rp($sAlokasi)
+                . '  •  Realisasi ' . $rp($sTotal) . ' (' . $pct($sTotal, $sAlokasi) . '%)');
+            $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E74B5']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'indent' => 1],
+                'borders'   => ['allBorders' => $mediumBorder],
+            ]);
+            $sheet->getRowDimension($currentRow)->setRowHeight(22);
+            $currentRow++;
+
+            foreach ($strat['dinas'] as $namaDinas => $list) {
+                // Kelompokkan per program → kegiatan
+                $programs = [];
+                foreach ($list as $r) {
+                    $pk = trim((string) $r['kode']) . '|' . trim((string) $r['program']);
+                    $programs[$pk][] = $r;
+                }
+
+                $dAlokasi = $sum($list, 'alokasi_anggaran');
+                $dSem1    = $sum($list, 'realisasi_sem1');
+                $dSem2    = $sum($list, 'realisasi_sem2');
+                $dTotal   = $sum($list, 'realisasi_total');
+
+                // ── Band Perangkat Daerah ───────────────────────
                 $sheet->mergeCells("A{$currentRow}:U{$currentRow}");
-                $sheet->setCellValue("A{$currentRow}", strtoupper($row['label']));
-                $bgColor = ['FFBDD7EE', 'FF9DC3E6', 'FF2E74B5'][$strategiIdx % 3] ?? 'FFBDD7EE';
-                $sheet->getStyle("A{$currentRow}")->applyFromArray([
-                    'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bgColor]],
-                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
-                    'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                $sheet->setCellValue("A{$currentRow}", '▍ ' . strtoupper($namaDinas)
+                    . '     |     ' . count($programs) . ' Program'
+                    . '  •  ' . count($list) . ' Sub Kegiatan'
+                    . '  •  Alokasi ' . $rp($dAlokasi)
+                    . '  •  Realisasi ' . $rp($dTotal) . ' (' . $pct($dTotal, $dAlokasi) . '%)');
+                $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                    'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF14304F']],
+                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFDCE6F1']],
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'indent' => 1],
+                    'borders'   => [
+                        'allBorders' => $thinBorder,
+                        'top'        => $mediumBorder,
+                        'bottom'     => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF9DB2C8']],
+                    ],
                 ]);
-                $sheet->getRowDimension($currentRow)->setRowHeight(18);
+                $sheet->getRowDimension($currentRow)->setRowHeight(19);
                 $currentRow++;
-                $no = 1;
-                continue;
+
+                $blockStart = $currentRow;
+                $no         = 1;
+                $progIdx    = 0;
+
+                foreach ($programs as $pRows) {
+                    $progStart = $currentRow;
+                    $progIdx++;
+
+                    // Kelompokkan lagi per kegiatan agar sel berulang bisa digabung vertikal
+                    $kegiatanGroups = [];
+                    foreach ($pRows as $r) {
+                        $kegiatanGroups[trim((string) $r['kegiatan'])][] = $r;
+                    }
+
+                    foreach ($kegiatanGroups as $kRows) {
+                        $kegStart = $currentRow;
+                        foreach ($kRows as $r) {
+                            $cols = [
+                                'A' => $no++,
+                                'B' => $r['strategi'],
+                                'C' => $r['perangkat_daerah'],
+                                'D' => $r['kode'],
+                                'E' => $r['program'],
+                                'F' => $r['kegiatan'],
+                                'G' => $r['sub_kegiatan'],
+                                'H' => $r['aktivitas_langsung'],
+                                'I' => $r['aktivitas_tidak_langsung'],
+                                'J' => $r['aktivitas_penunjang'],
+                                'K' => (float) $r['alokasi_anggaran'],
+                                'L' => $r['sumber_pembiayaan'],
+                                'M' => $r['sifat_bantuan'],
+                                'N' => $r['lokasi'],
+                                'O' => $r['jumlah_sasaran'],
+                                'P' => $r['besaran_manfaat'],
+                                'Q' => $r['jenis_bantuan'],
+                                'R' => $r['durasi_pemberian'],
+                                'S' => (float) $r['realisasi_sem1'],
+                                'T' => (float) $r['realisasi_sem2'],
+                                'U' => (float) $r['realisasi_total'],
+                            ];
+                            foreach ($cols as $col => $value) {
+                                $sheet->setCellValue("{$col}{$currentRow}", $value);
+                            }
+
+                            $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $progIdx % 2 === 1 ? 'FFFFFFFF' : 'FFF6F9FC']],
+                                'borders'   => ['allBorders' => $thinBorder],
+                                'font'      => ['size' => 8, 'color' => ['argb' => 'FF1F2937']],
+                                'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_TOP, 'wrapText' => true, 'indent' => 1],
+                            ]);
+                            $sheet->getStyle("A{$currentRow}")->getAlignment()
+                                ->setHorizontal(Alignment::HORIZONTAL_CENTER)->setIndent(0);
+                            foreach (['K', 'S', 'T', 'U'] as $col) {
+                                $sheet->getStyle("{$col}{$currentRow}")->getNumberFormat()->setFormatCode($moneyFmt);
+                                $sheet->getStyle("{$col}{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                            }
+                            foreach (['L', 'M', 'O', 'R'] as $col) {
+                                $sheet->getStyle("{$col}{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+                            }
+                            $sheet->getStyle("U{$currentRow}")->getFont()->setBold(true);
+                            $sheet->getRowDimension($currentRow)->setRowHeight($this->estimateRowHeight($r, count($pRows) === 1));
+
+                            $currentRow++;
+                        }
+
+                        // Gabung sel Kegiatan yang berulang
+                        if ($currentRow - 1 > $kegStart) {
+                            $sheet->mergeCells("F{$kegStart}:F" . ($currentRow - 1));
+                        }
+                    }
+
+                    // Gabung sel Kode & Program → nama program tidak lagi mengulang ke bawah
+                    if ($currentRow - 1 > $progStart) {
+                        $sheet->mergeCells("D{$progStart}:D" . ($currentRow - 1));
+                        $sheet->mergeCells("E{$progStart}:E" . ($currentRow - 1));
+                    }
+                    // Garis pemisah antar program
+                    $sheet->getStyle("A{$progStart}:U{$progStart}")->applyFromArray([
+                        'borders' => ['top' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF8FA9C4']]],
+                    ]);
+                }
+
+                $blockEnd = $currentRow - 1;
+
+                // Gabung kolom Strategi & Perangkat Daerah untuk satu blok dinas
+                if ($blockEnd > $blockStart) {
+                    $sheet->mergeCells("B{$blockStart}:B{$blockEnd}");
+                    $sheet->mergeCells("C{$blockStart}:C{$blockEnd}");
+                }
+                $sheet->getStyle("B{$blockStart}:F{$blockEnd}")->applyFromArray([
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true, 'indent' => 1],
+                    'font'      => ['bold' => true, 'color' => ['argb' => 'FF14304F']],
+                ]);
+                $sheet->getStyle("G{$blockStart}:G{$blockEnd}")->getFont()->setBold(true);
+
+                // ── Subtotal per Perangkat Daerah ───────────────
+                $sheet->mergeCells("A{$currentRow}:J{$currentRow}");
+                $sheet->setCellValue("A{$currentRow}", 'SUBTOTAL ' . strtoupper($namaDinas)
+                    . '  (' . count($programs) . ' Program / ' . count($list) . ' Sub Kegiatan)  —  Serapan ' . $pct($dTotal, $dAlokasi) . '%');
+                $sheet->setCellValue("K{$currentRow}", $dAlokasi);
+                $sheet->mergeCells("L{$currentRow}:R{$currentRow}");
+                $sheet->setCellValue("S{$currentRow}", $dSem1);
+                $sheet->setCellValue("T{$currentRow}", $dSem2);
+                $sheet->setCellValue("U{$currentRow}", $dTotal);
+                $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                    'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FF14304F']],
+                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFEDF3FA']],
+                    'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                    'borders'   => ['allBorders' => $thinBorder, 'top' => $mediumBorder, 'bottom' => $mediumBorder],
+                ]);
+                $sheet->getStyle("A{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT)->setIndent(1);
+                foreach (['K', 'S', 'T', 'U'] as $col) {
+                    $sheet->getStyle("{$col}{$currentRow}")->getNumberFormat()->setFormatCode($moneyFmt);
+                    $sheet->getStyle("{$col}{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                }
+                $sheet->getRowDimension($currentRow)->setRowHeight(20);
+                $currentRow++;
+
+                // ── Margin / jarak antar Perangkat Daerah ───────
+                $sheet->getRowDimension($currentRow)->setRowHeight(10);
+                $currentRow++;
+
+                $ringkasan[] = [
+                    'strategi' => $strat['label'],
+                    'dinas'    => $namaDinas,
+                    'program'  => count($programs),
+                    'sub'      => count($list),
+                    'alokasi'  => $dAlokasi,
+                    'sem1'     => $dSem1,
+                    'sem2'     => $dSem2,
+                    'total'    => $dTotal,
+                ];
+
+                $grand['alokasi'] += $dAlokasi;
+                $grand['sem1']    += $dSem1;
+                $grand['sem2']    += $dSem2;
+                $grand['total']   += $dTotal;
+                $grand['sub']     += count($list);
+                $grand['dinas']++;
             }
 
-            $cols = [
-                'A' => $no++,
-                'B' => $row['strategi'],
-                'C' => $row['perangkat_daerah'],
-                'D' => $row['kode'],
-                'E' => $row['program'],
-                'F' => $row['kegiatan'],
-                'G' => $row['sub_kegiatan'],
-                'H' => $row['aktivitas_langsung'],
-                'I' => $row['aktivitas_tidak_langsung'],
-                'J' => $row['aktivitas_penunjang'],
-                'K' => (float) $row['alokasi_anggaran'],
-                'L' => $row['sumber_pembiayaan'],
-                'M' => $row['sifat_bantuan'],
-                'N' => $row['lokasi'],
-                'O' => $row['jumlah_sasaran'],
-                'P' => $row['besaran_manfaat'],
-                'Q' => $row['jenis_bantuan'],
-                'R' => $row['durasi_pemberian'],
-                'S' => (float) $row['realisasi_sem1'],
-                'T' => (float) $row['realisasi_sem2'],
-                'U' => (float) $row['realisasi_total'],
-            ];
-
-            foreach ($cols as $col => $value) {
-                $sheet->setCellValue("{$col}{$currentRow}", $value);
-            }
-
-            $numFmt = '#,##0';
+            // ── Total per Strategi ──────────────────────────────
+            $sheet->mergeCells("A{$currentRow}:J{$currentRow}");
+            $sheet->setCellValue("A{$currentRow}", 'TOTAL ' . $judulStrat . '  —  Serapan ' . $pct($sTotal, $sAlokasi) . '%');
+            $sheet->setCellValue("K{$currentRow}", $sAlokasi);
+            $sheet->mergeCells("L{$currentRow}:R{$currentRow}");
+            $sheet->setCellValue("S{$currentRow}", $sSem1);
+            $sheet->setCellValue("T{$currentRow}", $sSem2);
+            $sheet->setCellValue("U{$currentRow}", $sTotal);
+            $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                'borders'   => ['allBorders' => $mediumBorder],
+            ]);
+            $sheet->getStyle("A{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT)->setIndent(1);
             foreach (['K', 'S', 'T', 'U'] as $col) {
-                $sheet->getStyle("{$col}{$currentRow}")->getNumberFormat()->setFormatCode($numFmt);
+                $sheet->getStyle("{$col}{$currentRow}")->getNumberFormat()->setFormatCode($moneyFmt);
                 $sheet->getStyle("{$col}{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             }
+            $sheet->getRowDimension($currentRow)->setRowHeight(21);
+            $currentRow++;
 
-            $fillColor = ($no % 2 === 0) ? 'FFF5F8FC' : 'FFFFFFFF';
-            $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
-                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $fillColor]],
-                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFD0D8E0']]],
-                'font'    => ['size' => 8],
-                'alignment' => ['vertical' => Alignment::VERTICAL_TOP, 'wrapText' => true],
-            ]);
-            $sheet->getRowDimension($currentRow)->setRowHeight(40);
-
+            // ── Margin antar strategi ───────────────────────────
+            $sheet->getRowDimension($currentRow)->setRowHeight(16);
             $currentRow++;
         }
 
-        // ── Column widths ────────────────────────────────────────
+        // ── Grand total ─────────────────────────────────────────
+        if (!empty($tree)) {
+            $sheet->mergeCells("A{$currentRow}:J{$currentRow}");
+            $sheet->setCellValue("A{$currentRow}", 'GRAND TOTAL SELURUH STRATEGI  ('
+                . $grand['dinas'] . ' Perangkat Daerah / ' . $grand['sub'] . ' Sub Kegiatan)  —  Serapan '
+                . $pct($grand['total'], $grand['alokasi']) . '%');
+            $sheet->setCellValue("K{$currentRow}", $grand['alokasi']);
+            $sheet->mergeCells("L{$currentRow}:R{$currentRow}");
+            $sheet->setCellValue("S{$currentRow}", $grand['sem1']);
+            $sheet->setCellValue("T{$currentRow}", $grand['sem2']);
+            $sheet->setCellValue("U{$currentRow}", $grand['total']);
+            $sheet->getStyle("A{$currentRow}:U{$currentRow}")->applyFromArray([
+                'font'      => ['bold' => true, 'size' => 11, 'color' => ['argb' => 'FFFFFFFF']],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0F2D4A']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                'borders'   => ['allBorders' => $mediumBorder],
+            ]);
+            $sheet->getStyle("A{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT)->setIndent(1);
+            foreach (['K', 'S', 'T', 'U'] as $col) {
+                $sheet->getStyle("{$col}{$currentRow}")->getNumberFormat()->setFormatCode($moneyFmt);
+                $sheet->getStyle("{$col}{$currentRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            }
+            $sheet->getRowDimension($currentRow)->setRowHeight(24);
+        } else {
+            $sheet->mergeCells("A{$currentRow}:U{$currentRow}");
+            $sheet->setCellValue("A{$currentRow}", 'Tidak ada data laporan untuk filter yang dipilih.');
+            $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                'font'      => ['italic' => true, 'size' => 10, 'color' => ['argb' => 'FF64748B']],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+            ]);
+        }
+
+        // ── Lebar kolom, freeze pane & setelan cetak ────────────
         $widths = [
-            'A'=>5,'B'=>22,'C'=>28,'D'=>28,'E'=>30,'F'=>35,'G'=>40,
-            'H'=>25,'I'=>25,'J'=>20,'K'=>18,'L'=>12,'M'=>16,'N'=>20,
-            'O'=>14,'P'=>18,'Q'=>14,'R'=>12,'S'=>16,'T'=>16,'U'=>16,
+            'A'=>5,'B'=>22,'C'=>26,'D'=>18,'E'=>32,'F'=>34,'G'=>38,
+            'H'=>24,'I'=>24,'J'=>20,'K'=>18,'L'=>12,'M'=>16,'N'=>20,
+            'O'=>14,'P'=>18,'Q'=>14,'R'=>14,'S'=>16,'T'=>16,'U'=>17,
         ];
         foreach ($widths as $col => $w) {
             $sheet->getColumnDimension($col)->setWidth($w);
         }
+        $sheet->freezePane("D{$dataStartRow}");
 
-        // ── Output ───────────────────────────────────────────────
+        $sheet->getPageSetup()
+            ->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A3)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0);
+        $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd($hRow, $hRow3);
+        $sheet->getPageMargins()->setTop(0.4)->setBottom(0.4)->setLeft(0.3)->setRight(0.3);
+        $sheet->getHeaderFooter()->setOddFooter('&L&9Matriks OPPKPKE ' . $tahun . '&R&9Halaman &P dari &N');
+
+        // ── Sheet Ringkasan per Perangkat Daerah ────────────────
+        $this->buildRingkasanSheet($spreadsheet, $ringkasan, $grand, $tahun, $semLabel, $moneyFmt);
+        $spreadsheet->setActiveSheetIndex(0);
+
+        // ── Output ──────────────────────────────────────────────
         $filename = "Matriks_OPPKPKE_{$tahun}_Semester{$semester}.xlsx";
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header("Content-Disposition: attachment; filename=\"{$filename}\"");
@@ -1801,6 +2067,149 @@ class OppkpkeController extends Controller
         $writer = new Xlsx($spreadsheet);
         $writer->save('php://output');
         exit;
+    }
+
+    /**
+     * Perkiraan tinggi baris supaya teks panjang tetap terbaca tanpa membuat
+     * semua baris jadi setinggi baris terpanjang.
+     */
+    private function estimateRowHeight(array $r, bool $includeProgram = false): float
+    {
+        $fields = [
+            'sub_kegiatan' => 38, 'aktivitas_langsung' => 24, 'aktivitas_tidak_langsung' => 24,
+            'aktivitas_penunjang' => 20, 'lokasi' => 20, 'besaran_manfaat' => 18, 'jenis_bantuan' => 14,
+        ];
+        if ($includeProgram) {
+            $fields += ['program' => 32, 'kegiatan' => 34, 'kode' => 18];
+        }
+
+        $lines = 1;
+        foreach ($fields as $key => $width) {
+            $len   = mb_strlen(trim((string) ($r[$key] ?? '')));
+            $lines = max($lines, (int) ceil($len / max(8, $width - 2)));
+        }
+
+        return min(96.0, max(22.0, $lines * 11.0));
+    }
+
+    /**
+     * Sheet ke-2: rekap ringkas per perangkat daerah, untuk pembacaan cepat.
+     */
+    private function buildRingkasanSheet(Spreadsheet $spreadsheet, array $ringkasan, array $grand, $tahun, string $semLabel, string $moneyFmt): void
+    {
+        $ws = $spreadsheet->createSheet();
+        $ws->setTitle('Ringkasan');
+        $ws->setShowGridlines(false);
+
+        $ws->mergeCells('A1:J1');
+        $ws->setCellValue('A1', "RINGKASAN OPPKPKE PER PERANGKAT DAERAH — SEMESTER {$semLabel} TAHUN {$tahun}");
+        $ws->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 12, 'color' => ['argb' => 'FF1E3A5F']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $ws->getRowDimension(1)->setRowHeight(26);
+        $ws->getRowDimension(2)->setRowHeight(8);
+
+        $head = ['No', 'Strategi OPPKPKE', 'Perangkat Daerah', 'Jml Program', 'Jml Sub Kegiatan',
+                 'Alokasi (Rp)', 'Realisasi Sem. 1 (Rp)', 'Realisasi Sem. 2 (Rp)', 'Realisasi Total (Rp)', '% Serapan'];
+        foreach ($head as $i => $label) {
+            $ws->setCellValue(chr(65 + $i) . '3', $label);
+        }
+        $ws->getStyle('A3:J3')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1E3A5F']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFB0C4DE']]],
+        ]);
+        $ws->getRowDimension(3)->setRowHeight(30);
+
+        $row        = 4;
+        $no         = 1;
+        $prevStr    = null;
+        $stratStart = $row;
+
+        foreach ($ringkasan as $r) {
+            if ($prevStr !== null && $prevStr !== $r['strategi']) {
+                if ($row - 1 > $stratStart) {
+                    $ws->mergeCells("B{$stratStart}:B" . ($row - 1));
+                }
+                $ws->getRowDimension($row)->setRowHeight(8); // margin antar strategi
+                $row++;
+                $stratStart = $row;
+            }
+            $prevStr = $r['strategi'];
+
+            $persen = $r['alokasi'] > 0 ? $r['total'] / $r['alokasi'] : 0;
+            $ws->setCellValue("A{$row}", $no);
+            $ws->setCellValue("B{$row}", $r['strategi']);
+            $ws->setCellValue("C{$row}", $r['dinas']);
+            $ws->setCellValue("D{$row}", $r['program']);
+            $ws->setCellValue("E{$row}", $r['sub']);
+            $ws->setCellValue("F{$row}", $r['alokasi']);
+            $ws->setCellValue("G{$row}", $r['sem1']);
+            $ws->setCellValue("H{$row}", $r['sem2']);
+            $ws->setCellValue("I{$row}", $r['total']);
+            $ws->setCellValue("J{$row}", $persen);
+
+            $ws->getStyle("A{$row}:J{$row}")->applyFromArray([
+                'font'      => ['size' => 9],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $no % 2 === 0 ? 'FFF6F9FC' : 'FFFFFFFF']],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFD5DDE6']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true, 'indent' => 1],
+            ]);
+            foreach (['F', 'G', 'H', 'I'] as $col) {
+                $ws->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode($moneyFmt);
+                $ws->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            }
+            foreach (['A', 'D', 'E'] as $col) {
+                $ws->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            }
+            $ws->getStyle("J{$row}")->getNumberFormat()->setFormatCode('0.0%');
+            $ws->getStyle("J{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $ws->getStyle("J{$row}")->getFont()->setBold(true)->getColor()->setARGB(
+                $persen >= 0.85 ? 'FF1B7F4B' : ($persen >= 0.5 ? 'FFB7791F' : 'FFB3261E')
+            );
+            $ws->getRowDimension($row)->setRowHeight(26);
+            $row++;
+            $no++;
+        }
+
+        if ($row - 1 > $stratStart) {
+            $ws->mergeCells("B{$stratStart}:B" . ($row - 1));
+        }
+
+        // Grand total
+        $row++;
+        $ws->mergeCells("A{$row}:C{$row}");
+        $ws->setCellValue("A{$row}", 'GRAND TOTAL');
+        $ws->setCellValue("D{$row}", array_sum(array_column($ringkasan, 'program')));
+        $ws->setCellValue("E{$row}", $grand['sub']);
+        $ws->setCellValue("F{$row}", $grand['alokasi']);
+        $ws->setCellValue("G{$row}", $grand['sem1']);
+        $ws->setCellValue("H{$row}", $grand['sem2']);
+        $ws->setCellValue("I{$row}", $grand['total']);
+        $ws->setCellValue("J{$row}", $grand['alokasi'] > 0 ? $grand['total'] / $grand['alokasi'] : 0);
+        $ws->getStyle("A{$row}:J{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0F2D4A']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF9DB2C8']]],
+        ]);
+        foreach (['F', 'G', 'H', 'I'] as $col) {
+            $ws->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode($moneyFmt);
+            $ws->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        }
+        $ws->getStyle("J{$row}")->getNumberFormat()->setFormatCode('0.0%');
+        $ws->getRowDimension($row)->setRowHeight(24);
+
+        foreach (['A'=>5,'B'=>26,'C'=>34,'D'=>11,'E'=>13,'F'=>18,'G'=>18,'H'=>18,'I'=>18,'J'=>11] as $col => $w) {
+            $ws->getColumnDimension($col)->setWidth($w);
+        }
+        $ws->freezePane('A4');
+        $ws->getPageSetup()
+            ->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0);
     }
 
     public function exportPdf(Request $request)
@@ -1873,7 +2282,7 @@ class OppkpkeController extends Controller
 
             if (empty($groupRows)) continue;
 
-            $rows[] = ['_type' => 'strategi_header', 'label' => $strat->nama];
+            $rows[] = ['_type' => 'strategi_header', 'label' => $strat->nama, 'kode' => $strat->kode ?? ''];
             foreach ($groupRows as $r) {
                 $rows[] = $r;
             }

@@ -154,6 +154,14 @@
             </a>
             @endmenuon
 
+            @menuon('daerah','pagu')
+            <a href="{{ route('oppkpke.pagu.index') }}"
+               class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.pagu.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-money-check-dollar w-5 text-center flex-shrink-0 text-emerald-300"></i>
+                <span class="text-sm font-medium">Kelola Pagu Anggaran</span>
+            </a>
+            @endmenuon
+
             @menuon('daerah','report')
             <a href="{{ route('oppkpke.report') }}"
                class="flex items-center gap-3 px-5 py-3.5 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.report') ? 'nav-active' : '' }}">
@@ -286,6 +294,14 @@
                class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.laporan.*') ? 'nav-active' : '' }}">
                 <i class="fas fa-file-pen w-5 text-center flex-shrink-0"></i>
                 <span class="text-sm">Input Laporan</span>
+            </a>
+            @endmenuon
+
+            @menuon('master','pagu')
+            <a href="{{ route('oppkpke.pagu.index') }}"
+               class="flex items-center gap-3 px-5 py-3 hover:bg-white/10 transition {{ request()->routeIs('oppkpke.pagu.*') ? 'nav-active' : '' }}">
+                <i class="fas fa-money-check-dollar w-5 text-center flex-shrink-0"></i>
+                <span class="text-sm">Kelola Pagu Anggaran</span>
             </a>
             @endmenuon
 

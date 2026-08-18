@@ -26,6 +26,7 @@
             ['Utama', [
                 ['dashboard',       'Beranda',          'fa-house',         'oppkpke.dashboard',      [], 'oppkpke.dashboard'],
                 ['laporan',         'Input Data',       'fa-pen-to-square', 'oppkpke.laporan.index',  [], 'oppkpke.laporan.*'],
+                ['pagu',            'Kelola Pagu',      'fa-money-check-dollar', 'oppkpke.pagu.index', [], 'oppkpke.pagu.*'],
                 ['report',          'Rekap Laporan',    'fa-table-list',    'oppkpke.report',         [], 'oppkpke.report'],
                 ['chat',            'Chat Support IT',  'fa-comments',      'oppkpke.chat.index',     [], 'oppkpke.chat.*'],
             ]],
@@ -59,6 +60,7 @@
                 ['dashboard',  'Dashboard',           'fa-gauge',         'oppkpke.dashboard',  [], 'oppkpke.dashboard'],
                 ['presentasi', 'Ikhtisar Eksekutif',  'fa-chart-line',    'oppkpke.presentasi', [], 'oppkpke.presentasi'],
                 ['laporan',    'Input Laporan',       'fa-pen-to-square', 'oppkpke.laporan.index', [], 'oppkpke.laporan.*'],
+                ['pagu',       'Kelola Pagu',         'fa-money-check-dollar', 'oppkpke.pagu.index', [], 'oppkpke.pagu.*'],
                 ['statistik',  'Statistik',           'fa-chart-column',  'oppkpke.statistik',  [], 'oppkpke.statistik'],
                 ['matrix',     'Matriks',             'fa-table',         'oppkpke.matrix', ['tahun' => request('tahun', date('Y'))], 'oppkpke.matrix'],
             ]],

@@ -131,7 +131,7 @@ class BudgetInsightService
 
         $ringkasan = "Pada tahun {$tahun}, total alokasi anggaran pengentasan kemiskinan sebesar "
             . $this->rupiah($r['total_alokasi']) . " dengan realisasi " . $this->rupiah($r['total_realisasi'])
-            . " atau {$persen}%, tergolong {$kategori}. "
+            . ' atau ' . $this->angka($persen) . "%, tergolong {$kategori}. "
             . "Dari {$r['jumlah_pd_aktif']} perangkat daerah aktif, {$r['pd_terisi']} telah menganggarkan"
             . ($r['pd_kosong'] > 0 ? " dan {$r['pd_kosong']} belum menganggarkan. " : ". ");
 
@@ -410,11 +410,416 @@ class BudgetInsightService
             'yoy'             => $yoy,
             'forecast'        => $forecast,
             'risiko'          => $risiko,
+            'ikhtisar'        => $this->executiveOutcome($tahun),
             'narasi'          => $narrative['ringkasan'],
             'sorotan'         => $narrative['sorotan'],
             'rekomendasi'     => $narrative['rekomendasi'],
             'generated_at'    => $snap['generated_at'],
         ];
+    }
+
+    /**
+     * IKHTISAR EKSEKUTIF — rangkuman OUTPUT (keluaran) dan OUTCOME (hasil) satu
+     * tahun anggaran, dirakit dari data nyata agar bisa dibaca pimpinan dalam
+     * hitungan detik tanpa kehilangan detail.
+     *
+     * Prinsipnya jujur: setiap angka outcome disertai tingkat kelengkapan data
+     * pendukungnya, sehingga pembaca tahu seberapa kuat dasar kesimpulannya.
+     *
+     * @return array<string,mixed>
+     */
+    public function executiveOutcome(int $tahun): array
+    {
+        $snap = $this->snapshot($tahun);
+        $r    = $snap['ringkasan'];
+
+        $alokasi   = (float) $r['total_alokasi'];
+        $realisasi = (float) $r['total_realisasi'];
+        $sisa      = max($alokasi - $realisasi, 0.0);
+        $persen    = (float) $r['persentase_realisasi'];
+
+        // ── Cakupan struktur: apa yang benar-benar dilaporkan tahun ini ──
+        $cakupan = DB::table('laporan_oppkpke as lo')
+            ->join('sub_kegiatan as sk', 'lo.sub_kegiatan_id', '=', 'sk.id')
+            ->join('kegiatan as k',      'sk.kegiatan_id',     '=', 'k.id')
+            ->join('programs as p',      'k.program_id',       '=', 'p.id')
+            ->where('lo.tahun', $tahun)
+            ->whereNull('lo.deleted_at')
+            ->selectRaw('COUNT(DISTINCT p.perangkat_daerah_id) as pd')
+            ->selectRaw('COUNT(DISTINCT p.id) as program')
+            ->selectRaw('COUNT(DISTINCT k.id) as kegiatan')
+            ->selectRaw('COUNT(DISTINCT sk.id) as sub_kegiatan')
+            ->first();
+
+        // ── Agregat baris laporan ────────────────────────────────────────
+        $agg = DB::table('laporan_oppkpke')
+            ->where('tahun', $tahun)->whereNull('deleted_at')
+            ->selectRaw('COUNT(*) as baris')
+            ->selectRaw('SUM(CASE WHEN alokasi_anggaran > 0 THEN 1 ELSE 0 END) as beranggaran')
+            ->selectRaw('SUM(CASE WHEN realisasi_total > 0 THEN 1 ELSE 0 END) as bergerak')
+            ->selectRaw('SUM(CASE WHEN alokasi_anggaran > 0 AND realisasi_total <= 0 THEN 1 ELSE 0 END) as diam')
+            ->selectRaw('SUM(CASE WHEN alokasi_anggaran > 0 AND realisasi_total <= 0 THEN alokasi_anggaran ELSE 0 END) as anggaran_diam')
+            ->first();
+
+        $beranggaran = (int) ($agg->beranggaran ?? 0);
+        $bergerak    = (int) ($agg->bergerak ?? 0);
+        $diam        = (int) ($agg->diam ?? 0);
+
+        // ── Kelengkapan pengisian kolom kunci (dasar kekuatan outcome) ───
+        $kolomKunci = [
+            'jumlah_sasaran'   => 'Jumlah sasaran',
+            'lokasi'           => 'Lokasi',
+            'besaran_manfaat'  => 'Besaran manfaat',
+            'durasi_pemberian' => 'Durasi bantuan',
+            'jenis_bantuan'    => 'Jenis bantuan',
+            'sifat_bantuan'    => 'Sifat bantuan',
+        ];
+        $qIsi = DB::table('laporan_oppkpke')->where('tahun', $tahun)->whereNull('deleted_at');
+        foreach (array_keys($kolomKunci) as $kolom) {
+            $qIsi->selectRaw("SUM(CASE WHEN {$kolom} IS NOT NULL AND TRIM({$kolom}) <> '' THEN 1 ELSE 0 END) as isi_{$kolom}");
+        }
+        $isi     = $qIsi->first();
+        $baris   = max((int) ($agg->baris ?? 0), 0);
+        $detailK = [];
+        $totalIsi = 0;
+        foreach ($kolomKunci as $kolom => $label) {
+            $n = (int) ($isi->{"isi_{$kolom}"} ?? 0);
+            $totalIsi += $n;
+            $detailK[] = [
+                'label'  => $label,
+                'terisi' => $n,
+                'persen' => $baris > 0 ? round(($n / $baris) * 100, 1) : 0.0,
+            ];
+        }
+        usort($detailK, fn ($a, $b) => $b['persen'] <=> $a['persen']);
+        $kelengkapan = [
+            'persen' => ($baris > 0 && $kolomKunci) ? round(($totalIsi / ($baris * count($kolomKunci))) * 100, 1) : 0.0,
+            'baris'  => $baris,
+            'detail' => $detailK,
+        ];
+
+        // ── Isi kolom teks: sasaran, wilayah, jenis & sifat bantuan ──────
+        $teks = DB::table('laporan_oppkpke')
+            ->where('tahun', $tahun)->whereNull('deleted_at')
+            ->get(['jumlah_sasaran', 'satuan_sasaran', 'lokasi', 'jenis_bantuan', 'sifat_bantuan']);
+
+        $wilayah = [];
+        $jenis   = [];
+        $sifat   = [];
+        $sasaran = [];   // satuan => jumlah
+        $sasaranEntri = 0;
+        $sasaranTerukur = 0;
+
+        foreach ($teks as $t) {
+            // Dipisah hanya pada ";" atau baris baru — koma justru bagian dari
+            // nama lokasi ("Desa X, Kecamatan Y"), memecahnya bikin salah hitung.
+            foreach (preg_split('/[;\n]+/', (string) $t->lokasi) as $lok) {
+                $lok = $this->cleanName($lok);
+                if ($lok !== '' && mb_strlen($lok) <= 60) {
+                    $wilayah[mb_strtolower($lok)] = $lok;
+                }
+            }
+
+            $jb = $this->cleanName((string) $t->jenis_bantuan);
+            if ($jb !== '') {
+                $key = mb_strtolower($jb);
+                $jenis[$key] = ['nama' => $this->titleCase($jb), 'n' => ($jenis[$key]['n'] ?? 0) + 1];
+            }
+
+            $sb = $this->normalisasiSifat((string) $t->sifat_bantuan);
+            if ($sb !== '') {
+                $sifat[$sb] = ($sifat[$sb] ?? 0) + 1;
+            }
+
+            $js = $this->cleanName((string) $t->jumlah_sasaran);
+            if ($js === '') {
+                continue;
+            }
+            $sasaranEntri++;
+            if (preg_match('/^([0-9][0-9.,]*)\s*(.*)$/u', $js, $m)) {
+                $angka  = (float) str_replace(',', '.', str_replace('.', '', $m[1]));
+                $satuan = $this->cleanName($m[2]) !== ''
+                    ? $this->titleCase($this->potongSatuan($m[2]))
+                    : $this->titleCase($this->cleanName((string) $t->satuan_sasaran) ?: 'Sasaran');
+                if ($angka > 0) {
+                    $sasaranTerukur++;
+                    $sasaran[$satuan] = ($sasaran[$satuan] ?? 0) + $angka;
+                }
+            }
+        }
+
+        // Satuan penerima manusia didahulukan — itu yang paling bermakna bagi
+        // pimpinan; satuan fisik (hektar, paket, unit) menyusul di belakangnya.
+        uksort($sasaran, function ($a, $b) use ($sasaran) {
+            $oa = $this->satuanOrang($a) ? 1 : 0;
+            $ob = $this->satuanOrang($b) ? 1 : 0;
+            return $oa === $ob ? ($sasaran[$b] <=> $sasaran[$a]) : ($ob <=> $oa);
+        });
+        $sasaranTop = array_slice($sasaran, 0, 4, true);
+
+        uasort($jenis, fn ($a, $b) => $b['n'] <=> $a['n']);
+        $jenisTop = array_slice(array_values($jenis), 0, 4);
+
+        arsort($sifat);
+
+        // ── Status / verdict ─────────────────────────────────────────────
+        $status = $this->statusCapaian($persen, $realisasi);
+
+        // ── Headline: satu kalimat inti ──────────────────────────────────
+        $headline = $realisasi > 0
+            ? 'Dari ' . $this->miliar($alokasi) . ' anggaran pengentasan kemiskinan yang direncanakan, '
+                . $this->miliar($realisasi) . ' (' . $this->angka($persen) . '%) sudah tersalur ke masyarakat, '
+                . 'menyisakan ' . $this->miliar($sisa) . ' yang belum dibelanjakan hingga laporan ini disusun.'
+            : 'Anggaran pengentasan kemiskinan ' . $tahun . ' sudah direncanakan sebesar ' . $this->miliar($alokasi)
+                . ', namun belum ada realisasi yang tercatat sehingga hasil di lapangan belum dapat diukur.';
+
+        // ── OUTPUT — keluaran yang dikerjakan ────────────────────────────
+        $output = [
+            [
+                'label' => 'Perangkat daerah bergerak',
+                'nilai' => $this->angka((int) ($cakupan->pd ?? 0)),
+                'dari'  => 'dari ' . $r['jumlah_pd_aktif'] . ' PD aktif',
+                'ket'   => $r['pd_kosong'] > 0
+                    ? $r['pd_kosong'] . ' PD belum menganggarkan sama sekali'
+                    : 'seluruh PD aktif sudah menganggarkan',
+                'ikon'  => 'fa-building-columns',
+            ],
+            [
+                'label' => 'Program dijalankan',
+                'nilai' => $this->angka((int) ($cakupan->program ?? 0)),
+                'dari'  => (int) ($cakupan->kegiatan ?? 0) . ' kegiatan turunan',
+                'ket'   => 'rangkaian program lintas ' . count($snap['per_strategi']) . ' strategi OPPKPKE',
+                'ikon'  => 'fa-diagram-project',
+            ],
+            [
+                'label' => 'Sub kegiatan terlaporkan',
+                'nilai' => $this->angka($baris),
+                'dari'  => $beranggaran . ' beranggaran',
+                'ket'   => $bergerak . ' sub kegiatan sudah membelanjakan anggaran'
+                    . ($beranggaran > 0 ? ' (' . $this->angka(round(($bergerak / $beranggaran) * 100, 1)) . '% dari yang beranggaran)' : ''),
+                'ikon'  => 'fa-list-check',
+            ],
+            [
+                'label' => 'Wilayah terjangkau',
+                'nilai' => $this->angka(count($wilayah)),
+                'dari'  => 'lokasi berbeda tercatat',
+                'ket'   => count($wilayah) > 0
+                    ? 'contoh: ' . implode(', ', array_map(
+                        fn ($w) => mb_strimwidth($w, 0, 26, '…'),
+                        array_slice(array_values($wilayah), 0, 3)
+                    ))
+                    : 'kolom lokasi belum diisi',
+                'ikon'  => 'fa-location-dot',
+            ],
+        ];
+
+        // ── OUTCOME — hasil yang dirasakan ───────────────────────────────
+        $rataPerSub = $bergerak > 0 ? $realisasi / $bergerak : 0.0;
+        $sasaranTeks = [];
+        foreach ($sasaranTop as $satuan => $jml) {
+            $sasaranTeks[] = $this->angka($jml) . ' ' . $satuan;
+        }
+        $sifatTeks = [];
+        foreach ($sifat as $namaSifat => $n) {
+            $sifatTeks[] = "{$namaSifat} ({$n})";
+        }
+
+        $outcome = [
+            [
+                'label' => 'Anggaran tersalur',
+                'nilai' => $this->miliar($realisasi),
+                'dari'  => $this->angka($persen) . '% dari pagu',
+                'ket'   => 'Semester 1 ' . $this->miliar($snap['semester']['realisasi_sem1'])
+                    . ' • Semester 2 ' . $this->miliar($snap['semester']['realisasi_sem2']),
+                'ikon'  => 'fa-hand-holding-heart',
+            ],
+            [
+                'label' => 'Manfaat belum tersalur',
+                'nilai' => $this->miliar($sisa),
+                'dari'  => $this->angka(100 - $persen) . '% pagu tertahan',
+                'ket'   => $diam > 0
+                    ? $this->miliar((float) ($agg->anggaran_diam ?? 0)) . ' di antaranya ada di ' . $diam . ' sub kegiatan yang belum bergerak sama sekali'
+                    : ($beranggaran > 0
+                        ? 'seluruh sub kegiatan beranggaran sudah mulai membelanjakan'
+                        : 'belum ada sub kegiatan beranggaran pada tahun ini'),
+                'ikon'  => 'fa-hourglass-half',
+            ],
+            [
+                'label' => 'Sasaran penerima manfaat',
+                'nilai' => ! empty($sasaranTeks) ? $sasaranTeks[0] : 'Belum terukur',
+                'dari'  => $sasaranTerukur . ' dari ' . $baris . ' sub kegiatan terkuantifikasi',
+                'ket'   => count($sasaranTeks) > 1
+                    ? 'juga: ' . implode(' • ', array_slice($sasaranTeks, 1, 3))
+                    : ($sasaranEntri > $sasaranTerukur
+                        ? ($sasaranEntri - $sasaranTerukur) . ' entri sasaran masih ditulis naratif (belum berupa angka)'
+                        : 'lengkapi kolom jumlah sasaran agar hasil terukur'),
+                'ikon'  => 'fa-people-group',
+            ],
+            [
+                'label' => 'Rata-rata belanja per sub kegiatan aktif',
+                'nilai' => $this->miliar($rataPerSub),
+                'dari'  => 'dari ' . $bergerak . ' sub kegiatan aktif',
+                'ket'   => ! empty($jenisTop)
+                    ? 'jenis bantuan terbanyak: ' . implode(', ', array_map(fn ($j) => $j['nama'], array_slice($jenisTop, 0, 2)))
+                    : ($sifatTeks ? 'sifat bantuan: ' . implode(' • ', $sifatTeks) : 'jenis bantuan belum banyak diisi'),
+                'ikon'  => 'fa-coins',
+            ],
+        ];
+
+        // ── Yang berjalan baik ───────────────────────────────────────────
+        $positif = [];
+        $stratIsi = array_values(array_filter($snap['per_strategi'], fn ($x) => $x['alokasi'] > 0));
+        usort($stratIsi, fn ($a, $b) => $b['persentase'] <=> $a['persentase']);
+        if (! empty($stratIsi) && $stratIsi[0]['persentase'] > 0) {
+            $positif[] = 'Strategi [' . $stratIsi[0]['kode'] . '] ' . $stratIsi[0]['nama']
+                . ' memimpin dengan serapan ' . $this->angka($stratIsi[0]['persentase']) . '%.';
+        }
+        if (! empty($snap['pd_tertinggi'])) {
+            $top = $snap['pd_tertinggi'][0];
+            $positif[] = $top['nama'] . ' menyalurkan paling besar, ' . $this->miliar($top['realisasi'])
+                . ' (' . $this->angka($top['persentase']) . '% dari pagunya).';
+        }
+        if ($beranggaran > 0 && $bergerak > 0) {
+            $positif[] = $bergerak . ' dari ' . $beranggaran . ' sub kegiatan beranggaran sudah berjalan '
+                . '(' . $this->angka(round(($bergerak / $beranggaran) * 100, 1)) . '%).';
+        }
+        if ($r['pd_kosong'] === 0) {
+            $positif[] = 'Seluruh ' . $r['jumlah_pd_aktif'] . ' perangkat daerah aktif sudah menganggarkan.';
+        }
+        if (empty($positif)) {
+            $positif[] = 'Perencanaan sudah tersusun — capaian menunggu realisasi dicatat.';
+        }
+
+        // ── Yang perlu perhatian ─────────────────────────────────────────
+        $perhatian = [];
+        if ($baris === 0) {
+            $perhatian[] = 'Belum ada satu pun laporan tercatat untuk tahun ' . $tahun . ' — ikhtisar ini belum bisa menggambarkan apa pun.';
+        }
+        if ($baris > 0 && $persen < 50) {
+            $perhatian[] = 'Serapan keseluruhan baru ' . $this->angka($persen) . '%, di bawah titik wajar paruh tahun (50%).';
+        }
+        if ($diam > 0) {
+            $perhatian[] = $diam . ' sub kegiatan beranggaran (' . $this->miliar((float) ($agg->anggaran_diam ?? 0))
+                . ') belum mencatat realisasi sama sekali.';
+        }
+        $nTanpa = count($snap['pd_tanpa_realisasi']);
+        if ($nTanpa > 0) {
+            $perhatian[] = $nTanpa . ' perangkat daerah sudah beranggaran namun nol realisasi: '
+                . implode(', ', array_slice($snap['pd_tanpa_realisasi'], 0, 3))
+                . ($nTanpa > 3 ? ', dan ' . ($nTanpa - 3) . ' lainnya.' : '.');
+        }
+        if ($r['pd_kosong'] > 0) {
+            $perhatian[] = $r['pd_kosong'] . ' perangkat daerah aktif belum menganggarkan sehingga tidak terlihat kontribusinya.';
+        }
+        if ($baris > 0 && $kelengkapan['persen'] < 70) {
+            $lemah = end($detailK);
+            $perhatian[] = 'Kelengkapan data pendukung baru ' . $this->angka($kelengkapan['persen']) . '%'
+                . ($lemah ? ' — paling kosong: ' . $lemah['label'] . ' (' . $this->angka($lemah['persen']) . '%)' : '')
+                . ', membuat hasil di lapangan sulit diukur.';
+        }
+        if (empty($perhatian)) {
+            $perhatian[] = 'Tidak ada temuan menonjol — pertahankan ritme pelaporan dan penyerapan.';
+        }
+
+        return [
+            'tahun'       => $tahun,
+            'status'      => $status,
+            'headline'    => $headline,
+            'persen'      => $persen,
+            'alokasi'     => $alokasi,
+            'realisasi'   => $realisasi,
+            'sisa'        => $sisa,
+            'output'      => $output,
+            'outcome'     => $outcome,
+            'positif'     => $positif,
+            'perhatian'   => $perhatian,
+            'kelengkapan' => $kelengkapan,
+        ];
+    }
+
+    /** Label status capaian + warna, dipakai badge Ikhtisar Eksekutif. */
+    private function statusCapaian(float $persen, float $realisasi): array
+    {
+        if ($realisasi <= 0) {
+            return ['label' => 'Belum Ada Realisasi', 'level' => 'kritis', 'warna' => 'red',
+                    'ikon' => 'fa-circle-exclamation', 'arti' => 'Anggaran sudah direncanakan tetapi belum ada yang dibelanjakan.'];
+        }
+        if ($persen < 25) {
+            return ['label' => 'Serapan Sangat Rendah', 'level' => 'kritis', 'warna' => 'red',
+                    'ikon' => 'fa-triangle-exclamation', 'arti' => 'Manfaat ke masyarakat masih sangat terbatas — perlu intervensi segera.'];
+        }
+        if ($persen < 50) {
+            return ['label' => 'Perlu Percepatan', 'level' => 'perhatian', 'warna' => 'amber',
+                    'ikon' => 'fa-gauge-high', 'arti' => 'Penyaluran berjalan namun tertinggal dari ritme wajar tahun anggaran.'];
+        }
+        if ($persen < 80) {
+            return ['label' => 'Berjalan Cukup Baik', 'level' => 'baik', 'warna' => 'blue',
+                    'ikon' => 'fa-thumbs-up', 'arti' => 'Penyaluran sesuai jalur — jaga konsistensi hingga akhir tahun.'];
+        }
+        return ['label' => 'Capaian Optimal', 'level' => 'optimal', 'warna' => 'green',
+                'ikon' => 'fa-circle-check', 'arti' => 'Hampir seluruh anggaran sudah tersalur menjadi manfaat.'];
+    }
+
+    /** "Rp 12,34 M" untuk nilai besar, "Rp 12.345.678" untuk nilai kecil. */
+    public function miliar(float $n): string
+    {
+        if (abs($n) >= 1_000_000_000) {
+            return 'Rp ' . number_format($n / 1_000_000_000, 2, ',', '.') . ' M';
+        }
+        if (abs($n) >= 1_000_000) {
+            return 'Rp ' . number_format($n / 1_000_000, 1, ',', '.') . ' Jt';
+        }
+        return $this->rupiah($n);
+    }
+
+    /** Angka gaya Indonesia, desimal dibuang bila bulat. */
+    private function angka(float|int $n): string
+    {
+        return floor((float) $n) == (float) $n
+            ? number_format((float) $n, 0, ',', '.')
+            : number_format((float) $n, 1, ',', '.');
+    }
+
+    /**
+     * Satuan sasaran sering ditulis sebagai kalimat panjang ("Keluarga yang
+     * Mengikuti Penumbuhan Kesadaran…") — ambil inti satuannya saja.
+     */
+    private function potongSatuan(string $s): string
+    {
+        $stop  = ['yang', 'dan', 'di', 'ke', 'dari', 'untuk', 'dengan', 'dalam', 'pada', 'melalui', 'atau', 'serta', 'agar', 'sebagai'];
+        $ambil = [];
+        foreach (preg_split('/\s+/', $this->cleanName($s)) as $kata) {
+            if (in_array(mb_strtolower($kata), $stop, true) || count($ambil) >= 3) {
+                break;
+            }
+            $ambil[] = $kata;
+        }
+        return implode(' ', $ambil);
+    }
+
+    /** Satuan yang menghitung manusia lebih layak jadi angka utama outcome. */
+    private function satuanOrang(string $satuan): bool
+    {
+        return (bool) preg_match(
+            '/\b(jiwa|orang|keluarga|kk|rumah tangga|siswa|murid|pelajar|mahasiswa|warga|penduduk|anak|balita|lansia|ibu|petani|nelayan|peternak|pelaku|kelompok|penerima|pekerja|guru|kader|penyandang)\b/iu',
+            $satuan
+        );
+    }
+
+    /** Sifat bantuan diketik bebas ("insidential", "Insedintel") — samakan. */
+    private function normalisasiSifat(string $s): string
+    {
+        $s = mb_strtolower($this->cleanName($s));
+        if ($s === '') return '';
+        if (str_contains($s, 'insi') || str_contains($s, 'inse')) return 'Insidentil';
+        if (str_contains($s, 'rutin')) return 'Rutin';
+        return $this->titleCase($s);
+    }
+
+    /** Kapital di awal kata, agar teks hasil impor enak dibaca. */
+    private function titleCase(string $s): string
+    {
+        return mb_convert_case($this->cleanName($s), MB_CASE_TITLE, 'UTF-8');
     }
 
     public function rupiah(float $n): string
