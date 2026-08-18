@@ -20,13 +20,61 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # Kegagalan "ssh: handshake failed ... [none publickey]" hampir selalu
+      # bersumber dari bentuk secret yang salah (public key tertukar dengan
+      # private key, atau tersalin sebagian), bukan dari server. Langkah ini
+      # memeriksa bentuknya lebih dulu dan menjelaskan persis apa yang salah.
+      # Isi kunci tidak pernah dicetak.
+      - name: Periksa secret SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          gagal=0
+          [ -n "$SSH_HOST" ] || { echo "::error::Secret SSH_HOST belum diisi."; gagal=1; }
+          [ -n "$SSH_USER" ] || { echo "::error::Secret SSH_USER belum diisi."; gagal=1; }
+
+          if [ -z "$SSH_KEY" ]; then
+            echo "::error::Secret SSH_KEY belum diisi."
+            gagal=1
+          else
+            baris=$(echo "$SSH_KEY" | wc -l)
+            awal=$(echo "$SSH_KEY" | head -1)
+            case "$awal" in
+              *"BEGIN OPENSSH PRIVATE KEY"*|*"BEGIN RSA PRIVATE KEY"*|*"BEGIN EC PRIVATE KEY"*|*"BEGIN PRIVATE KEY"*)
+                echo "SSH_KEY terbaca sebagai private key ($baris baris)." ;;
+              ssh-rsa*|ssh-ed25519*|ecdsa-*)
+                echo "::error::SSH_KEY berisi PUBLIC key (isi berkas .pub). Yang diperlukan PRIVATE key - berkas tanpa akhiran .pub."
+                gagal=1 ;;
+              PuTTY*)
+                echo "::error::SSH_KEY berformat PuTTY (.ppk) yang tidak didukung. Ekspor ke format OpenSSH lebih dulu."
+                gagal=1 ;;
+              *)
+                echo "::error::SSH_KEY tidak diawali baris '-----BEGIN ... PRIVATE KEY-----'. Salin ulang SELURUH isi berkas private key."
+                gagal=1 ;;
+            esac
+
+            if [ "$baris" -lt 4 ]; then
+              echo "::error::SSH_KEY hanya $baris baris - kemungkinan tersalin sebagian atau baris barunya hilang saat menempel."
+              gagal=1
+            fi
+          fi
+
+          if [ "$gagal" -ne 0 ]; then
+            echo "::notice::Panduan perbaikan ada di docs/SETUP-VPS.md bagian 'Deploy GitHub gagal: ssh handshake failed'."
+            exit 1
+          fi
+          echo "Secret lengkap - lanjut menyambung ke VPS."
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: 22
+          # Isi secret SSH_PORT hanya bila port SSH server bukan 22.
+          port: ${{ secrets.SSH_PORT || 22 }}
           script: |
             set -e
             cd /var/www/oppkpke_apps
