@@ -1,25 +1,33 @@
 #!/bin/bash
 # =============================================================================
-# vps1-rpkd-nyalakan.sh — pemasangan PERTAMA RPKD di vps1 (warna green), dengan
-# database baru yang kosong. Tidak membuka apa pun ke internet: situs baru bisa
-# diakses publik setelah edge bersama disinkron dan DNS dipindah ke Cloudflare.
+# vps1-rpkd-nyalakan.sh — pemasangan PERTAMA RPKD di vps1 (warna green). Tidak
+# membuka apa pun ke internet: situs baru bisa diakses publik setelah edge bersama
+# disinkron dan DNS dipindah ke Cloudflare.
 #
 #   1. Prasyarat: image (vps1-rpkd-tarik-image.sh), rpkd.env (rpkd-env-siapkan).
 #   2. MySQL: nyala, sehat, akun rpkd_app/rpkd_migrasi/rpkd_backup sesuai secret.
-#   3. Migrasi: rpkd-migrasi <tag> (dump + php artisan migrate --force).
+#      --hanya-mysql: berhenti di sini, untuk impor data lama dulu (rpkd-impor-db).
+#   3. Migrasi: rpkd-migrasi <tag> (dump + php artisan migrate --force). Database
+#      kosong: semua tabel dibuat. Data impor: hanya migration yang belum tercatat.
 #   4. Aset publik versi ini -> /srv/rpkd/public/green.
 #   5. app-green; tunggu sehat; uji /up, database, storage, uji asap, koneksi keluar.
 #   6. Worker + scheduler (database sendiri, tidak berbagi jadwal dengan server lama).
 #
 # Sesudah ini, versi baru dipasang vps1-cd (Telegram) / rpkd-deploy, bukan skrip ini.
-# Jalankan: sudo bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh
+# Jalankan: sudo bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh [--hanya-mysql]
 # Aman diulang selama trafik masih di green.
 # =============================================================================
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root (sudo)." >&2; exit 1; }
 DOCKER_DIR=/opt/rpkd/src/docker
 ENVF=/srv/rpkd/deploy/compose.env
-[ $# -eq 0 ] || { echo "Skrip ini tidak menerima opsi." >&2; exit 2; }
+HANYA_MYSQL=0
+for a in "$@"; do
+    case "$a" in
+        --hanya-mysql) HANYA_MYSQL=1 ;;
+        *) echo "Opsi tidak dikenal: $a" >&2; exit 2 ;;
+    esac
+done
 D=/root/rpkd; install -d -m 0700 "$D"
 if [ -z "${RPKD_DI_TEE:-}" ]; then
     RPKD_DI_TEE=1 bash "$0" "$@" 2>&1 | tee -a "$D/nyalakan-$(date +%Y%m%d-%H%M%S).txt"
@@ -47,11 +55,16 @@ for s in mysql_root mysql_rpkd_app mysql_rpkd_migrasi mysql_rpkd_backup rpkd.env
     [ -s "/srv/rpkd/secrets/$s" ] || { echo "/srv/rpkd/secrets/$s belum ada (vps1-rpkd-siapkan.sh / rpkd-env-siapkan)." >&2; exit 1; }
 done
 TAG="$(awk -F= '$1=="RPKD_TAG" {print $2}' "$ENVF" | tail -1)"
-if [ -z "$TAG" ] || [ "$TAG" = belum-ada ]; then
-    echo "RPKD_TAG belum diisi. Jalankan vps1-rpkd-tarik-image.sh dulu." >&2; exit 1
+if [ "$HANYA_MYSQL" = 0 ]; then
+    if [ -z "$TAG" ] || [ "$TAG" = belum-ada ]; then
+        echo "RPKD_TAG belum diisi. Jalankan vps1-rpkd-tarik-image.sh dulu." >&2; exit 1
+    fi
+    docker image inspect "rpkd-php:$TAG" >/dev/null 2>&1 || { echo "Image rpkd-php:$TAG tidak ada. Jalankan vps1-rpkd-tarik-image.sh." >&2; exit 1; }
+    echo "Image: rpkd-php:$TAG"
+else
+    # compose.yaml butuh RPKD_TAG terisi walau hanya MySQL yang dinyalakan.
+    [ -n "$TAG" ] || echo "RPKD_TAG=belum-ada" >> "$ENVF"
 fi
-docker image inspect "rpkd-php:$TAG" >/dev/null 2>&1 || { echo "Image rpkd-php:$TAG tidak ada. Jalankan vps1-rpkd-tarik-image.sh." >&2; exit 1; }
-echo "Image: rpkd-php:$TAG"
 dc config --quiet
 AKTIF="$(sed -nE 's/.*default[[:space:]]+(blue|green)[[:space:]]*;.*/\1/p' /srv/rpkd/nginx/active.conf 2>/dev/null | head -1)"
 if [ "${AKTIF:-green}" != green ]; then
@@ -75,10 +88,17 @@ fi
 docker exec rpkd-mysql-1 bash /docker-entrypoint-initdb.d/01-akun.sh
 JML="$(echo "SELECT COUNT(*) FROM mysql.user WHERE (user IN ('rpkd_app','rpkd_migrasi') AND host='172.30.22.%') OR (user='rpkd_backup' AND host='localhost');" | sql -N)"
 [ "$JML" = 3 ] || { echo "FATAL: akun rpkd_app/rpkd_migrasi/rpkd_backup tidak lengkap ($JML/3)." >&2; exit 1; }
-echo "MySQL sehat; tiga akun ada. Workbench: SSH ke vps1, MySQL 127.0.0.1:3308."
+TABEL="$(echo "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='rpkd';" | sql -N)"
+echo "MySQL sehat; tiga akun ada; database rpkd berisi $TABEL tabel. Workbench: SSH ke vps1, MySQL 127.0.0.1:3308."
+if [ "$HANYA_MYSQL" = 1 ]; then
+    langkah "SELESAI (--hanya-mysql)"
+    echo "Impor data lama : rpkd-impor-db <dump.sql|dump.sql.gz>"
+    echo "Lalu jalankan skrip ini lagi tanpa --hanya-mysql."
+    exit 0
+fi
 
 # -----------------------------------------------------------------------------
-langkah "3. Migrasi skema (database baru)"
+langkah "3. Migrasi skema"
 # -----------------------------------------------------------------------------
 rpkd-migrasi "$TAG"
 
@@ -143,5 +163,6 @@ langkah "SELESAI"
 dc --profile green --profile jadwal ps --format 'table {{.Service}}\t{{.Status}}'
 echo "Berikutnya:"
 echo "  - Edge  : bash /opt/pmb/src/docker/edge/vps1-edge.sh perbarui   (edge bergabung ke rpkd_edge)"
-echo "  - Admin : rpkd-admin-pertama <email> [--dengan-data-master]"
+echo "  - Akun  : data impor -> rpkd-akun-lemah (lalu --ganti kalau ada akun berpassword umum)"
+echo "            database kosong -> rpkd-admin-pertama <email> [--dengan-data-master]"
 echo "  - Uji lewat tunnel (port 9443) sebelum DNS dipindah: docs/DEPLOY-VPS1.md"

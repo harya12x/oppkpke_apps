@@ -1,0 +1,101 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-impor-db — impor dump SQL (.sql / .sql.gz) ke database rpkd di container
+# MySQL RPKD (rpkd-mysql-1), sebagai root di DALAM container (password dibaca
+# dari /run/secrets di container, tidak lewat argumen).
+#
+# Urutan pemasangan dengan data lama:
+#   vps1-rpkd-nyalakan.sh --hanya-mysql ; rpkd-impor-db <dump> ; vps1-rpkd-nyalakan.sh
+# (nyalakan menjalankan rpkd-migrasi: hanya migration yang belum tercatat di dump.)
+#
+# Pemakaian (root di vps1):
+#   rpkd-impor-db ~/oppkpke.sql            # file .sql biasa (mysqldump/Workbench)
+#   rpkd-impor-db ~/oppkpke.sql.gz         # gagal kalau rpkd sudah berisi tabel
+#   rpkd-impor-db ~/oppkpke.sql --timpa    # kosongkan rpkd dulu, lalu impor
+#   rpkd-impor-db ~/oppkpke.sql --simpan   # jangan hapus file dump setelah impor
+#
+# Dump dari Windows (CRLF) diterima; CREATE DATABASE/USE dan klausa DEFINER dibuang.
+# Setelah impor, antrean, cache, dan sesi dari sumber dikosongkan (jobs, cache,
+# sessions): job import lama tidak boleh jalan ulang, sesi login lama tidak berlaku.
+# File dump dihapus aman (shred) kecuali --simpan. Akun berpassword umum
+# diperiksa sesudahnya dengan rpkd-akun-lemah.
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root (sudo)." >&2; exit 1; }
+F="${1:?Pemakaian: rpkd-impor-db <dump.sql|dump.sql.gz> [--timpa] [--simpan]}"; shift
+TIMPA=0; SIMPAN=0
+for a in "$@"; do case "$a" in --timpa) TIMPA=1 ;; --simpan) SIMPAN=1 ;; *) echo "Opsi tidak dikenal: $a" >&2; exit 2 ;; esac; done
+[ -s "$F" ] || { echo "File tidak ada atau kosong: $F" >&2; exit 1; }
+C=rpkd-mysql-1
+DB=rpkd
+
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$C" 2>/dev/null)" = healthy ] \
+    || { echo "Container $C belum sehat. Jalankan dulu: bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh --hanya-mysql" >&2; exit 1; }
+
+sql() {   # sql [opsi mysql...]  — perintah dari stdin
+    # shellcheck disable=SC2016  # $(cat ...) dievaluasi sh di dalam container
+    docker exec -i "$C" sh -c 'MYSQL_PWD="$(cat /run/secrets/mysql_root)" exec mysql -uroot --default-character-set=utf8mb4 "$@"' sh "$@"
+}
+
+case "$F" in
+    *.gz) gzip -t "$F" || { echo "File gzip rusak/terpotong: $F" >&2; exit 1; }; BACA=(gzip -dc "$F") ;;
+    *)    BACA=(cat "$F") ;;
+esac
+if ! ( set +o pipefail; "${BACA[@]}" | tail -c 400 | tr -d '\r' | grep -q 'Dump completed' ); then
+    echo "Dump tidak diakhiri '-- Dump completed' (terpotong?). Impor dibatalkan." >&2; exit 1
+fi
+
+# Dump harus untuk SATU database. Baris CREATE DATABASE + USE `nama_lama` dibuang
+# supaya data masuk ke rpkd. Lebih dari satu database di dump = ditolak.
+# shellcheck disable=SC2016  # backtick di sini literal SQL, bukan substitusi shell
+NAMA_DB="$( ( set +o pipefail; "${BACA[@]}" | tr -d '\r' | grep -oiE '^USE `[^`]+`' | sed -E 's/^USE //I' | sort -u ) || true )"
+JML_DB="$(printf '%s' "$NAMA_DB" | grep -c . || true)"
+if [ "$JML_DB" -gt 1 ]; then
+    echo "Dump memuat $JML_DB database berbeda:"; printf '%s\n' "$NAMA_DB"
+    echo "Ekspor ulang HANYA database OPPKPKE." >&2; exit 1
+fi
+[ "$JML_DB" = 1 ] && echo "Dump berasal dari $NAMA_DB; baris CREATE DATABASE/USE dibuang, data masuk ke $DB."
+# shellcheck disable=SC2016
+BUANG=(sed -E -e 's/\r$//' -e '/^USE `[^`]+`;[[:space:]]*$/Id' -e '/^CREATE DATABASE /Id' \
+           -e '/^(\/\*![0-9]+|CREATE )/ s/DEFINER[[:space:]]*=[[:space:]]*`[^`]*`@`[^`]*`//g' \
+           -e '/^(\/\*![0-9]+|CREATE )/ s/DEFINER[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+@[A-Za-z0-9_.%]+//g')
+
+ADA="$(echo "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB';" | sql -N)"
+if [ "$ADA" -gt 0 ]; then
+    if [ "$TIMPA" = 1 ]; then
+        echo "$DB berisi $ADA tabel; dikosongkan (--timpa)."
+        echo "DROP DATABASE \`$DB\`; CREATE DATABASE \`$DB\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" | sql
+    else
+        echo "$DB sudah berisi $ADA tabel. Tambahkan --timpa untuk mengosongkan lalu impor ulang." >&2; exit 1
+    fi
+fi
+
+echo "Mengimpor $(du -h "$F" | cut -f1) dari $(basename "$F") ..."
+MULAI=$(date +%s)
+if ! { echo "SET SESSION sql_mode='NO_AUTO_VALUE_ON_ZERO'; SET foreign_key_checks=0; SET unique_checks=0; SET sql_log_bin=0;"
+       "${BACA[@]}" | "${BUANG[@]}"
+       echo "SET foreign_key_checks=1; SET unique_checks=1;"
+     } | sql "$DB"; then
+    echo "IMPOR GAGAL. Database $DB sekarang terisi sebagian; ulangi dengan --timpa setelah penyebabnya diperbaiki." >&2
+    exit 1
+fi
+echo "Impor selesai dalam $(( $(date +%s) - MULAI )) detik."
+
+echo "Mengosongkan antrean, cache, dan sesi dari sumber:"
+for t in jobs job_batches cache cache_locks sessions; do
+    n="$(echo "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB' AND table_name='$t';" | sql -N)"
+    if [ "$n" = 1 ]; then echo "TRUNCATE TABLE \`$t\`;" | sql "$DB"; echo "  $t: dikosongkan"; fi
+done
+
+echo "Ringkasan:"
+sql -t "$DB" <<'SQL'
+SELECT (SELECT COUNT(*) FROM users)            AS akun,
+       (SELECT COUNT(*) FROM perangkat_daerah) AS perangkat_daerah,
+       (SELECT COUNT(*) FROM sub_kegiatan)     AS sub_kegiatan,
+       (SELECT COUNT(*) FROM laporan_oppkpke)  AS laporan,
+       (SELECT COUNT(*) FROM migrations)       AS migration_tercatat;
+SQL
+
+if [ "$SIMPAN" = 0 ]; then shred -u "$F"; echo "File dump dihapus aman: $F"; fi
+echo "Berikutnya: bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh   (migration yang tertinggal, app-green, worker)"
+echo "Lalu:       rpkd-akun-lemah   (periksa akun berpassword umum SEBELUM DNS dipindah)"

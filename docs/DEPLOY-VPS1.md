@@ -20,7 +20,9 @@ Telegram, blue/green tanpa putus.
 | Deploy | `vps1-cd` (Telegram) → `rpkd-deploy` → `rpkd-migrasi` (dump + `php artisan migrate`) → blue/green → pantau 5 menit |
 | Backup | dump sebelum tiap migrasi di `/srv/rpkd/backup` (20 terakhir) + `vps1-backup` harian (restic) |
 
-Database **dimulai kosong**: data dan akun dari server lama tidak dipindah.
+Database bisa dimulai kosong, atau diisi dump `oppkpke_db` lama lewat
+`rpkd-impor-db` (langkah 3). Dump lama sudah memuat semua migration kecuali
+migration dasar `0001_01_01_000003`, yang otomatis tidak mengubah apa pun di sana.
 
 ## 1. Repo (laptop)
 
@@ -87,7 +89,27 @@ Image dan pemasangan pertama (commit = 40 karakter dari main yang CI-nya hijau):
 
 ```bash
 sudo bash /opt/rpkd/src/docker/host/vps1-rpkd-tarik-image.sh <commit>
+```
+
+Dengan data lama (dump `oppkpke_db`, diunggah ke home lewat scp/WinSCP):
+
+```bash
+sudo bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh --hanya-mysql
+sudo rpkd-impor-db /home/<user>/oppkpkedb.sql     # dump dihapus aman setelah impor
+```
+
+Lalu (dengan atau tanpa data lama):
+
+```bash
 sudo bash /opt/rpkd/src/docker/host/vps1-rpkd-nyalakan.sh   # MySQL, migrate, app-green, worker, scheduler
+```
+
+**Data lama: periksa akun berpassword umum sebelum DNS dipindah.** Dump Oktober 2026
+memuat 41 akun operator daerah yang masih memakai password bawaan `UserSeeder`.
+
+```bash
+sudo rpkd-akun-lemah              # jumlah per role
+sudo rpkd-akun-lemah --ganti      # password acak baru -> /root/rpkd/akun-baru-*.csv (0600)
 ```
 
 Edge bersama (repo PMB, `docker/edge/`): sinkron folder `docker/` PMB terbaru
@@ -97,7 +119,7 @@ Edge bersama (repo PMB, `docker/edge/`): sinkron folder `docker/` PMB terbaru
 sudo bash /opt/pmb/src/docker/edge/vps1-edge.sh perbarui   # semua situs putus 1-2 detik
 ```
 
-Admin pertama (password acak ke file root-only, tidak dicetak):
+Admin pertama, hanya untuk database kosong (password acak ke file root-only, tidak dicetak):
 
 ```bash
 sudo rpkd-admin-pertama <email-admin> "Nama" --dengan-data-master
@@ -128,8 +150,10 @@ Port uji `9443` hanya ada di `127.0.0.1` vps1, tanpa AOP.
 
 Dikerjakan saat sudah siap, langkahnya diuraikan di sini (bukan perintah siap tempel):
 
-- Umumkan dulu ke operator perangkat daerah: aplikasi mulai dengan data kosong,
-  akun dibuat ulang oleh Admin Master.
+- Data lama: input di server lama dihentikan dulu, ambil dump terakhir, lalu impor
+  ulang (`rpkd-impor-db <dump> --timpa`, nyalakan, `rpkd-akun-lemah --ganti`) supaya
+  tidak ada laporan yang tertinggal. Bagikan password baru ke operator.
+- Database kosong: umumkan ke operator bahwa akun dibuat ulang oleh Admin Master.
 - Di Cloudflare, ubah `A @` dan `A www` ke IP publik vps1 (sama dengan record A
   devpmb/sia) dan **nyalakan proxy** (awan oranye). TTL Auto.
 - Pastikan `https://rpkdkabkotabaru.id/` membuka halaman login dan

@@ -1,0 +1,77 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-akun-lemah — periksa akun OPPKPKE yang masih memakai password umum
+# (bawaan UserSeeder "password123" dan sejenisnya), dan ganti massal.
+#
+#   rpkd-akun-lemah            jumlah akun lemah per role (tanpa email)
+#   rpkd-akun-lemah --daftar   tampilkan email akun lemah
+#   rpkd-akun-lemah --ganti    beri password acak baru ke SEMUA akun lemah, putus
+#                              sesi loginnya, tulis daftar email + password baru ke
+#                              /root/rpkd/akun-baru-<waktu>.csv (root, 0600).
+#                              Password tidak pernah dicetak ke layar.
+#
+# Wajib dijalankan sebelum DNS dipindah kalau database diimpor dari server lama:
+# akun dengan password umum = siapa pun bisa login begitu situs publik.
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+MODE="${1:-}"
+case "$MODE" in ""|--daftar|--ganti) ;; *) echo "Pemakaian: rpkd-akun-lemah [--daftar|--ganti]" >&2; exit 2 ;; esac
+
+w="$(sed -nE 's/.*default[[:space:]]+(blue|green)[[:space:]]*;.*/\1/p' /srv/rpkd/nginx/active.conf | head -1)"
+C="rpkd-app-${w:-green}-1"
+[ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" = true ] || { echo "$C tidak jalan." >&2; exit 1; }
+
+if [ "$MODE" = --ganti ]; then
+    read -r -p "Semua akun berpassword umum akan diberi password baru dan sesi loginnya diputus. Ketik GANTI: " j
+    [ "$j" = GANTI ] || { echo "Dibatalkan."; exit 0; }
+    D=/root/rpkd; install -d -m 0700 "$D"
+    OUT="$D/akun-baru-$(date +%Y%m%d-%H%M%S).csv"
+else
+    OUT=/dev/null
+fi
+
+# shellcheck disable=SC2016  # kode PHP, bukan variabel shell
+( umask 077
+  docker exec -e HOME=/tmp -e MODE="$MODE" -w /var/www/html "$C" php -r '
+    require "vendor/autoload.php";
+    $app = require "bootstrap/app.php";
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $umum = ["password123", "password", "12345678", "123456789", "123456", "admin123", "qwerty123", "oppkpke123"];
+    $mode = getenv("MODE");
+    $lemah = [];
+    foreach (App\Models\User::orderBy("id")->get(["id", "name", "email", "role", "password"]) as $u) {
+        foreach ($umum as $p) {
+            if (password_verify($p, $u->password)) { $lemah[] = $u; break; }
+        }
+    }
+    $perRole = [];
+    foreach ($lemah as $u) { $perRole[$u->role] = ($perRole[$u->role] ?? 0) + 1; }
+    fwrite(STDERR, "Akun berpassword umum: " . count($lemah) . " dari " . App\Models\User::count() . "\n");
+    foreach ($perRole as $r => $n) { fwrite(STDERR, "  $r: $n\n"); }
+    if ($mode === "--daftar") {
+        foreach ($lemah as $u) { fwrite(STDERR, "  - {$u->email} ({$u->role})\n"); }
+    }
+    if ($mode === "--ganti" && $lemah) {
+        echo "email,nama,role,password_baru\n";
+        foreach ($lemah as $u) {
+            $pw = Illuminate\Support\Str::password(14, symbols: false);
+            $u->forceFill(["password" => Illuminate\Support\Facades\Hash::make($pw), "remember_token" => null])->save();
+            Illuminate\Support\Facades\DB::table("sessions")->where("user_id", $u->id)->delete();
+            $nama = str_replace(["\"", ","], ["", " "], (string) $u->name);
+            echo "{$u->email},\"{$nama}\",{$u->role},{$pw}\n";
+        }
+        fwrite(STDERR, count($lemah) . " akun diberi password baru; sesi loginnya diputus.\n");
+    }
+  ' > "$OUT" ) || { rc=$?; [ "$OUT" = /dev/null ] || rm -f "$OUT"; exit "$rc"; }
+
+if [ "$MODE" = --ganti ]; then
+    if [ -s "$OUT" ]; then
+        chmod 0600 "$OUT"
+        echo "Daftar password baru: $OUT (root, 0600; tidak dicetak di sini)."
+        echo "  Bagikan ke tiap operator lewat jalur pribadi, minta ganti password setelah login,"
+        echo "  lalu hapus filenya: shred -u $OUT"
+    else
+        rm -f "$OUT"; echo "Tidak ada akun yang perlu diganti."
+    fi
+fi
