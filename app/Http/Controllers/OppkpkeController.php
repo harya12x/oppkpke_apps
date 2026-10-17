@@ -904,6 +904,7 @@ class OppkpkeController extends Controller
             'total'      => count($matchedRows),
             'matched'    => $coll->whereIn('status', ['matched', 'new_sk'])->count(),
             'not_found'  => $coll->where('status', 'not_found')->count(),
+            'not_found_realisasi' => (float) $coll->where('status', 'not_found')->sum('realisasi_total'),
             'duplicate'  => $coll->where('status', 'duplicate')->count(),
             'new_sk'     => $coll->where('status', 'new_sk')->count(),
             'ambiguous'  => $coll->where('status', 'ambiguous')->count(),
@@ -920,15 +921,15 @@ class OppkpkeController extends Controller
     }
 
     /**
-     * Terapkan pilihan admin untuk baris ambigu: id sub kegiatan (wajib salah satu
-     * kandidat baris itu) atau 'new' bila $allowNew. Pilihan lain diabaikan → dilewati.
+     * Terapkan pilihan admin untuk baris ambigu / tidak cocok: id sub kegiatan (wajib
+     * salah satu kandidat baris itu) atau 'new' bila $allowNew. Pilihan lain diabaikan → dilewati.
      */
     private function applyAmbiguityChoices(array $rows, array $resolve, bool $allowNew): array
     {
         foreach ($rows as &$row) {
-            if ($row['status'] !== 'ambiguous') continue;
+            if (! in_array($row['status'], ['ambiguous', 'not_found'], true)) continue;
             $choice = (string) ($resolve[$row['row_num']] ?? '');
-            $ids    = array_column($row['ambig_candidates'] ?? [], 'id');
+            $ids    = array_column($row['ambig_candidates'] ?? $row['nf_candidates'] ?? [], 'id');
             if ($allowNew && $choice === 'new') {
                 $row['resolved_to'] = 'new';
             } elseif (ctype_digit($choice) && in_array((int) $choice, $ids, true)) {
@@ -961,7 +962,7 @@ class OppkpkeController extends Controller
         }
 
         $cached['mode'] = $request->input('mode', 'lengkap');
-        $cached['rows'] = $this->applyAmbiguityChoices($cached['rows'], (array) $request->input('resolve', []), false);
+        $cached['rows'] = $this->applyAmbiguityChoices($cached['rows'], (array) $request->input('resolve', []), true);
 
         // Baris yang TIDAK dicentang di preview dilewati. (Dulu centang dikirim sebagai
         // import_ids[] tetapi server hanya membaca skip[] — hilangkan centang tak berefek.)
@@ -1546,19 +1547,30 @@ class OppkpkeController extends Controller
                 fn ($sk) => $kodeSub !== '' && strcasecmp(trim((string) $sk->kode), $kodeSub) === 0,
                 fn ($sk) => $kodeKeg !== '' && strcasecmp((string) ($kegCodeById[$sk->kegiatan_id] ?? ''), $kodeKeg) === 0,
             ];
-            foreach ($steps as $step) {
+            $codeConfirmed = false;   // kode sub kegiatan identik → bukti lebih kuat dari nama kegiatan
+            foreach ($steps as $i => $step) {
                 $hit = $pool->filter($step)->values();
                 if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
-                if ($hit->count() > 1) $pool = $hit;
+                if ($hit->count() > 1) { $pool = $hit; $codeConfirmed = $codeConfirmed || $i === 0; }
             }
 
             if ($rowKeg !== '') {
                 $fit     = $pool->filter(fn ($sk) => $kegFit($sk, $rowKeg) === true)->values();
                 $unknown = $pool->filter(fn ($sk) => $kegFit($sk, $rowKeg) === null)->values();
                 $hit     = $fit->isNotEmpty() ? $fit : $unknown;
+                // Nama kegiatan beda TIDAK membatalkan kode sub kegiatan yang identik (kegiatan di DB bisa keliru).
+                if ($hit->isEmpty() && $codeConfirmed) $hit = $pool;
                 if ($hit->isEmpty()) return ['match' => null, 'pool' => $pool, 'other_keg' => true];
                 if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
                 $pool = $hit;
+            }
+
+            // Strategi baris (RAT): padanan sub kegiatan per strategi dibedakan di sini.
+            $strId = $raw['strategi_id_file'] ?? null;
+            if ($strId) {
+                $hit = $pool->filter(fn ($sk) => (int) optional($sk->kegiatan?->program)->strategi_id === (int) $strId)->values();
+                if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
+                if ($hit->count() > 1) $pool = $hit;
             }
 
             if ($kode !== '') {
@@ -1575,8 +1587,59 @@ class OppkpkeController extends Controller
             return ['match' => null, 'pool' => $pool, 'other_keg' => false];
         };
 
+        // Info satu kandidat sub kegiatan untuk dropdown pilihan admin di preview.
+        $candInfo = fn ($sk) => [
+            'id'            => $sk->id,
+            'nama'          => $sk->nama_sub_kegiatan,
+            'kode'          => trim((string) $sk->kode) ?: null,
+            'kegiatan_id'   => $sk->kegiatan_id,
+            'kegiatan'      => optional($sk->kegiatan)->nama_kegiatan,
+            'kegiatan_kode' => $kegCodeById[$sk->kegiatan_id] ?? null,
+            'program'       => trim(optional($sk->kegiatan?->program)->kode_program . ' ' . optional($sk->kegiatan?->program)->nama_program),
+            'pd'            => $skPd($sk),
+            'alokasi_db'    => $existingAlok->has($sk->id) ? (float) $existingAlok[$sk->id] : null,
+            'claimed_by'    => null, // diisi setelah semua baris dicocokkan
+        ];
+
+        // Penjelasan baris TIDAK COCOK + kandidat terdekat di PD yang sama, agar admin
+        // bisa memetakannya ke sub kegiatan yang ada atau membuatnya baru (tidak hilang diam-diam).
+        $describeNotFound = function (array $raw) use ($allSk, $pdMatch, $skPd, $pdNorm, $nameScore, $candInfo, $kegiatanByName, $kegPd, $existingIds) {
+            $rowPd   = trim((string) ($raw['perangkat_daerah'] ?? ''));
+            $pdLabel = $rowPd !== '' ? $rowPd : 'semua perangkat daerah';
+            $rowKey  = $pdNorm((string) $raw['sub_kegiatan']);
+            $near = $allSk->filter(fn ($sk) => $pdMatch($skPd($sk), $rowPd))
+                ->map(fn ($sk) => ['sk' => $sk, 'score' => $nameScore($rowKey, $pdNorm($sk->nama_sub_kegiatan))])
+                ->filter(fn ($x) => $x['score'] >= 0.5)->sortByDesc('score')->take(4)->values();
+
+            $reasons = [];
+            if (! empty($raw['match_note'])) {
+                $reasons[] = $raw['match_note'];
+            } elseif ($near->isEmpty()) {
+                $reasons[] = "Tidak ada sub kegiatan bernama sama atau mirip di {$pdLabel}.";
+            } else {
+                $reasons[] = "Tidak ada sub kegiatan bernama persis sama di {$pdLabel}; yang paling mirip \""
+                    . $near[0]['sk']->nama_sub_kegiatan . '" (' . (int) round($near[0]['score'] * 100) . '%).';
+            }
+            $keg = trim((string) ($raw['kegiatan'] ?? ''));
+            if ($keg === '') {
+                $reasons[] = 'Kolom Kegiatan kosong — bila dibuat baru, kegiatannya dibuat otomatis dari nama sub kegiatan.';
+            } elseif ($kegiatanByName->get($this->normalizeSkName($keg), collect())->contains(fn ($k) => $pdMatch($kegPd($k), $rowPd))) {
+                $reasons[] = "Kegiatan \"{$keg}\" sudah ada — bila dibuat baru, sub kegiatan ditempatkan di bawahnya.";
+            } else {
+                $reasons[] = "Kegiatan \"{$keg}\" juga belum ada di database — ikut dibuat bila memilih \"Buat baru\".";
+            }
+            if ($existingIds->isNotEmpty()) {
+                $reasons[] = 'Bila baris ini tercantum di RAT, import RAT terbaru lebih dulu — import RAT membuat sub kegiatan barunya otomatis.';
+            }
+
+            return [
+                'nf_reasons'    => $reasons,
+                'nf_candidates' => $near->map(fn ($x) => $candInfo($x['sk']) + ['skor' => (int) round($x['score'] * 100)])->all(),
+            ];
+        };
+
         // Penjelasan baris ambigu + daftar kandidat agar admin bisa memilih di preview.
-        $describeAmbig = function ($pool, array $raw, string $kind) use ($kegCodeById, $skPd, $existingAlok) {
+        $describeAmbig = function ($pool, array $raw, string $kind) use ($kegCodeById, $candInfo, $existingAlok) {
             $rowPd   = trim((string) ($raw['perangkat_daerah'] ?? ''));
             $kodeSub = trim((string) ($raw['kode_sub'] ?? ''));
             $kodeKeg = trim((string) ($raw['kode_kegiatan'] ?? ''));
@@ -1605,18 +1668,7 @@ class OppkpkeController extends Controller
                 ? 'Belum ada kandidat yang punya data tahun ini (mis. dari import RAT) untuk dijadikan acuan.'
                 : $withData . ' kandidat sama-sama sudah punya data tahun ini — kemungkinan sub kegiatan ganda di database.';
 
-            $candidates = $pool->map(fn ($sk) => [
-                'id'            => $sk->id,
-                'nama'          => $sk->nama_sub_kegiatan,
-                'kode'          => trim((string) $sk->kode) ?: null,
-                'kegiatan_id'   => $sk->kegiatan_id,
-                'kegiatan'      => optional($sk->kegiatan)->nama_kegiatan,
-                'kegiatan_kode' => $kegCodeById[$sk->kegiatan_id] ?? null,
-                'program'       => trim(optional($sk->kegiatan?->program)->kode_program . ' ' . optional($sk->kegiatan?->program)->nama_program),
-                'pd'            => $skPd($sk),
-                'alokasi_db'    => $existingAlok->has($sk->id) ? (float) $existingAlok[$sk->id] : null,
-                'claimed_by'    => null, // diisi setelah semua baris dicocokkan
-            ])->sortBy('kegiatan')->values()->all();
+            $candidates = $pool->map($candInfo)->sortBy('kegiatan')->values()->all();
 
             return ['ambig_kind' => $kind, 'ambig_reasons' => $reasons, 'ambig_candidates' => $candidates];
         };
@@ -1629,7 +1681,8 @@ class OppkpkeController extends Controller
 
             // Resolusi strategi dari file (kode/nama) untuk tampilan preview.
             $stratObj = StrategiOppkpke::resolveFromText($raw['strategi'] ?? '', $activeStrategi);
-            $raw['strategi_file'] = $stratObj?->nama;
+            $raw['strategi_file']    = $stratObj?->nama;
+            $raw['strategi_id_file'] = $stratObj?->id;
 
             $matched   = null;
             $ambigPool = null;
@@ -1685,8 +1738,11 @@ class OppkpkeController extends Controller
                 if ($strong->count() === 1 || ($strong->count() > 1 && $strong[0]['score'] - $strong[1]['score'] >= 0.03)) {
                     $matched = $strong[0]['sk'];
                 } elseif ($strong->count() > 1) {
-                    $ambigPool = $strong->pluck('sk');
-                    $ambigKind = 'fuzzy';
+                    // Beberapa kandidat nyaris identik (mis. padanan per strategi) → pertajam seperti nama persis.
+                    $top = $strong->filter(fn ($s) => $strong[0]['score'] - $s['score'] < 0.03)->pluck('sk')->values();
+                    $n   = $narrow($top, $raw);
+                    $matched = $n['match'];
+                    if (! $matched) { $ambigPool = $n['other_keg'] ? $top : $n['pool']; $ambigKind = 'fuzzy'; }
                 } elseif ($scored->isNotEmpty()) {
                     // Hanya mirip awalan → dianggap sub kegiatan berbeda (Data Baru); tampilkan sebagai info.
                     $raw['match_note'] = 'Mirip awalan dengan "' . $scored[0]['sk']->nama_sub_kegiatan . '" ('
@@ -1723,7 +1779,7 @@ class OppkpkeController extends Controller
             // Tandai bila program HARUS dibuat baru namun strategi file tak dikenali
             // (baris tsb akan DILEWATI saat eksekusi — tidak ditebak ke strategi lain).
             $raw['strategi_warn'] = ! $stratObj && $needsNewProgram($rowPd, (string) ($raw['program'] ?? ''), $kode);
-            $push($raw, $rowNum, 'not_found', null, null);
+            $push(array_merge($raw, $describeNotFound($raw)), $rowNum, 'not_found', null, null);
         }
 
         // Tandai kandidat ambigu yang sudah dipakai baris lain (alokasinya nanti dijumlahkan).

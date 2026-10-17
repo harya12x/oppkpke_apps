@@ -279,6 +279,10 @@ class OppkpkeService
             $resolvedAmbig = 0;
             $merged        = 0;
             $outsidePlan   = 0;      // mode realisasi: SK belum punya data tahun ini (di luar RAT)
+            $resolvedNf    = 0;      // baris tidak cocok yang dipetakan / dibuat baru oleh admin
+            $createdHier   = 0;
+            $createdPd     = 0;
+            $hierCache     = ['pd' => [], 'prog' => [], 'keg' => []];
             $totalRealisasi = 0.0;
             $batch         = [];     // sub_kegiatan_id => [alokasi, sem1, sem2, total] yang sudah ditulis batch ini
 
@@ -291,8 +295,8 @@ class OppkpkeService
             if ($replaceYear && ! $realisasiOnly) {
                 $importSkIds = collect($cached['rows'])
                     ->filter(fn($r) => ! in_array((string) $r['row_num'], $skip)
-                        && (in_array($r['status'], ['matched', 'new_sk']) || ($r['status'] === 'ambiguous' && is_int($r['resolved_to'] ?? null))))
-                    ->map(fn ($r) => $r['status'] === 'ambiguous' ? $r['resolved_to'] : $r['sub_kegiatan_id'])
+                        && (in_array($r['status'], ['matched', 'new_sk']) || is_int($r['resolved_to'] ?? null)))
+                    ->map(fn ($r) => is_int($r['resolved_to'] ?? null) ? $r['resolved_to'] : $r['sub_kegiatan_id'])
                     ->filter()
                     ->unique()
                     ->values()
@@ -306,16 +310,24 @@ class OppkpkeService
             }
 
             foreach ($cached['rows'] as $row) {
-                if (in_array($row['status'], ['not_found', 'duplicate'])) { $skipped++; continue; }
+                if ($row['status'] === 'duplicate') { $skipped++; continue; }
                 if (in_array((string) $row['row_num'], $skip)) { $skipped++; continue; }
 
                 $skId = $row['sub_kegiatan_id'];
 
-                // Baris ambigu hanya diproses bila admin memilih tujuannya di preview.
-                if ($row['status'] === 'ambiguous') {
-                    if (! is_int($row['resolved_to'] ?? null)) { $skippedAmbig++; continue; }
-                    $skId = $row['resolved_to'];
-                    $resolvedAmbig++;
+                // Baris ambigu / tidak cocok hanya diproses bila admin memilih tindakannya di preview:
+                // dipetakan ke sub kegiatan yang ada, atau dibuat baru (PD/program/kegiatan otomatis).
+                if (in_array($row['status'], ['ambiguous', 'not_found'], true)) {
+                    $target = $row['resolved_to'] ?? null;
+                    if ($target === null) {
+                        $row['status'] === 'ambiguous' ? $skippedAmbig++ : $skipped++;
+                        continue;
+                    }
+                    $skId = $target === 'new'
+                        ? $this->forceCreateSkFromRow($row, $userId, $createdHier, $createdPd, $hierCache)
+                        : (int) $target;
+                    if (! $skId) { $skipped++; continue; }
+                    $row['status'] === 'ambiguous' ? $resolvedAmbig++ : $resolvedNf++;
                 }
 
                 if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
@@ -403,6 +415,9 @@ class OppkpkeService
                 'deleted'         => $deleted,
                 'skipped_ambig'   => $skippedAmbig,
                 'resolved_ambig'  => $resolvedAmbig,
+                'resolved_nf'     => $resolvedNf,
+                'created_hier'    => $createdHier,
+                'created_pd'      => $createdPd,
                 'merged'          => $merged,
                 'outside_plan'    => $outsidePlan,
                 'total_realisasi' => $totalRealisasi,
@@ -435,6 +450,7 @@ class OppkpkeService
             // → banyak sub kegiatan dari 1 operator/program tidak query & buat berulang
             // (bukan "insert 1-1"); entitas yang sama dipakai ulang.
             $hierCache = ['pd' => [], 'prog' => [], 'keg' => []];
+            $realigned = 0;          // sub kegiatan yang dipindah ke program strategi sesuai RAT
 
             foreach ($cached['rows'] as $row) {
                 $rowNumStr = (string) $row['row_num'];
@@ -471,6 +487,9 @@ class OppkpkeService
                 }
 
                 if (!$skId) { $skipped++; continue; }
+
+                // Strategi mengikuti kolom Strategi RAT tahun ini (strategi melekat pada program).
+                $skId = $this->alignStrategi((int) $skId, $row, (int) $cached['tahun'], $realigned, $hierCache);
 
                 $processedSkIds[] = $skId;
 
@@ -548,6 +567,7 @@ class OppkpkeService
                 'created_hier'  => $createdHier,
                 'created_pd'    => $createdPd,
                 'skipped_dup'   => $skippedDup,
+                'strategi_dipindah' => $realigned,
                 'skipped_ambig'  => $skippedAmbig,
                 'resolved_ambig' => $resolvedAmbig,
                 'merged'         => $merged,
@@ -595,31 +615,38 @@ class OppkpkeService
             $cache['pd'][$pdKey] = $pd;
         }
 
-        // ── PROGRAM (cache by pd + kode/nama) ──────────────────────────
-        $progCacheKey = $pd->id . '|' . ($kodeProg !== '' ? 'K:' . strtolower($kodeProg) : 'N:' . $normalize($progName));
+        // ── PROGRAM (cache by pd + strategi + kode/nama) ───────────────
+        // Satu program bisa tercatat di beberapa strategi (mis. "Program Pengelolaan Pendidikan"
+        // di strategi 1 DAN 3). Strategi baris menentukan program mana yang dipakai — dulu
+        // diambil program pertama berkode sama, sehingga sub kegiatan baru bisa masuk strategi lain.
+        $strategi     = StrategiOppkpke::resolveFromText($row['strategi'] ?? '');
+        $progCacheKey = $pd->id . '|' . ($strategi?->id ?? '-') . '|' . ($kodeProg !== '' ? 'K:' . strtolower($kodeProg) : 'N:' . $normalize($progName));
         if (isset($cache['prog'][$progCacheKey])) {
             $prog = $cache['prog'][$progCacheKey];
         } else {
-            $prog = null;
+            $cands = collect();
             if ($kodeProg !== '' || $progName !== '') {
-                $prog = Program::where('perangkat_daerah_id', $pd->id)->get()->first(fn($p) =>
+                $cands = Program::where('perangkat_daerah_id', $pd->id)->get()->filter(fn($p) =>
                     ($kodeProg !== '' && strcasecmp(trim($p->kode_program), $kodeProg) === 0) ||
                     ($progName !== '' && (
                         $normalize($p->nama_program) === $normalize($progName) ||
                         str_contains($normalize($p->nama_program), $normalize($progName)) ||
                         str_contains($normalize($progName), $normalize($p->nama_program))
                     ))
-                );
+                )->values();
             }
+            // Strategi tak dikenali → perilaku lama (program pertama yang cocok).
+            $prog = $strategi ? $cands->firstWhere('strategi_id', $strategi->id) : $cands->first();
             if (!$prog) {
                 // Program baru wajib strategi valid — tanpa fallback diam-diam.
-                $strategi = StrategiOppkpke::resolveFromText($row['strategi'] ?? '');
                 if (!$strategi) {
                     return null;
                 }
+                $base = $cands->first();   // nama/kode diambil dari program yang sama di strategi lain bila ada
                 $prog = Program::firstOrCreate(
-                    ['strategi_id' => $strategi->id, 'perangkat_daerah_id' => $pd->id, 'kode_program' => $kodeProg],
-                    ['nama_program' => ($progName !== '' ? $progName : 'Program (belum diisi)'), 'is_active' => true]
+                    ['strategi_id' => $strategi->id, 'perangkat_daerah_id' => $pd->id,
+                     'kode_program' => $kodeProg !== '' ? $kodeProg : (string) optional($base)->kode_program],
+                    ['nama_program' => $progName !== '' ? $progName : (optional($base)->nama_program ?: 'Program (belum diisi)'), 'is_active' => true]
                 );
             }
             // Lengkapi kode program bila kosong.
@@ -637,11 +664,8 @@ class OppkpkeService
         } else {
             $keg = null;
             if ($kegName !== '') {
-                $keg = Kegiatan::where('program_id', $prog->id)->get()->first(fn($k) =>
-                    $normalize($k->nama_kegiatan) === $normalize($kegName) ||
-                    str_contains($normalize($k->nama_kegiatan), $normalize($kegName)) ||
-                    str_contains($normalize($kegName), $normalize($k->nama_kegiatan))
-                );
+                $keg = Kegiatan::where('program_id', $prog->id)->get()
+                    ->first(fn($k) => $this->namaKegiatanSama($k->nama_kegiatan, $kegName));
             }
             if (!$keg) {
                 $keg = Kegiatan::firstOrCreate(
@@ -664,6 +688,107 @@ class OppkpkeService
 
         if ($sk->wasRecentlyCreated) $created++;
         return $sk->id;
+    }
+
+    /**
+     * Nama kegiatan dianggap sama bila identik, salah satu memuat yang lain, atau seluruh
+     * kata nama yang lebih pendek (min. 3 kata) ada di nama lain — mis.
+     * "Pengelolaan Pendidikan PAUD" = "Pengelolaan Pendidikan Anak Usia Dini (PAUD)".
+     */
+    private function namaKegiatanSama(string $a, string $b): bool
+    {
+        $norm = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+        [$a, $b] = [$norm($a), $norm($b)];
+        if ($a === '' || $b === '') return false;
+        if ($a === $b || str_contains($a, $b) || str_contains($b, $a)) return true;
+        [$ta, $tb] = [explode(' ', $a), explode(' ', $b)];
+        [$ts, $tl] = count($ta) <= count($tb) ? [$ta, $tb] : [$tb, $ta];
+
+        return count($ts) >= 3 && ! array_diff($ts, $tl);
+    }
+
+    /**
+     * Strategi di aplikasi melekat pada PROGRAM, sedangkan RAT menetapkannya per baris per tahun.
+     * Pastikan data tahun ini berada di program dengan strategi sesuai kolom Strategi file:
+     *  - sub kegiatan tanpa data tahun lain → dipindah utuh ke kegiatan padanannya;
+     *  - sub kegiatan yang punya data tahun lain → dibuatkan padanan di strategi yang benar dan
+     *    hanya data TAHUN INI yang dipindah, sehingga laporan tahun lain tidak berubah.
+     * Mengembalikan id sub kegiatan yang dipakai untuk tahun ini.
+     */
+    private function alignStrategi(int $skId, array $row, int $tahun, int &$moved, array &$cache): int
+    {
+        $cache['strat_all'] ??= StrategiOppkpke::where('is_active', true)->get();
+        $want = StrategiOppkpke::resolveFromText($row['strategi'] ?? '', $cache['strat_all']);
+        $sk   = SubKegiatan::with('kegiatan.program')->find($skId);
+        $keg  = $sk?->kegiatan;
+        $prog = $keg?->program;
+        if (! $want || ! $prog || (int) $prog->strategi_id === (int) $want->id) {
+            return $skId;
+        }
+
+        // Program padanan: OPD sama, strategi tujuan, nama program sama.
+        $pk = $prog->perangkat_daerah_id . '|' . $want->id . '|' . strtolower(trim($prog->nama_program));
+        if (! isset($cache['align_prog'][$pk])) {
+            $inPd   = Program::where('perangkat_daerah_id', $prog->perangkat_daerah_id)->where('strategi_id', $want->id)->get();
+            $target = $inPd->first(fn ($p) => strtolower(trim($p->nama_program)) === strtolower(trim($prog->nama_program)));
+            if (! $target) {
+                // Unik (strategi, OPD, kode): bila kode program sudah dipakai program lain di strategi
+                // tujuan, pakai kode program Permendagri dari kode sub kegiatan (mis. 3.25.04).
+                $kode = (string) $prog->kode_program;
+                if ($inPd->contains(fn ($p) => trim($p->kode_program) === trim($kode))) {
+                    $seg   = explode('.', trim((string) $sk->kode));
+                    $alt   = count($seg) === 6 ? implode('.', array_slice($seg, 0, 3)) : null;
+                    $taken = $inPd->first(fn ($p) => trim($p->kode_program) === trim($kode));
+                    if ($alt && ! $inPd->contains(fn ($p) => trim($p->kode_program) === $alt)) {
+                        $kode = $alt;
+                    } else {
+                        $target = $taken;   // tak ada kode lain: strategi tetap benar, memakai program yang ada
+                    }
+                }
+                $target ??= Program::create([
+                    'strategi_id' => $want->id, 'perangkat_daerah_id' => $prog->perangkat_daerah_id,
+                    'kode_program' => $kode, 'nama_program' => $prog->nama_program, 'is_active' => true,
+                ]);
+            }
+            $cache['align_prog'][$pk] = $target;
+        }
+        $target = $cache['align_prog'][$pk];
+
+        // Kegiatan padanan di program tujuan. Kegiatan menurut RAT baris ini yang dipakai (kegiatan lama
+        // di DB bisa keliru akibat import lama); bila kolom Kegiatan kosong, pakai nama kegiatan saat ini.
+        $kegName = trim((string) ($row['kegiatan'] ?? '')) ?: $keg->nama_kegiatan;
+        $kegKode = trim((string) ($row['kode_kegiatan'] ?? '')) ?: $keg->kode;
+        $kk = $target->id . '|' . strtolower($kegName);
+        $cache['align_keg'][$kk] ??= Kegiatan::where('program_id', $target->id)->get()
+                ->first(fn ($k) => $this->namaKegiatanSama($k->nama_kegiatan, $kegName))
+            ?? Kegiatan::create(['program_id' => $target->id, 'nama_kegiatan' => $kegName, 'kode' => $kegKode ?: null, 'is_active' => true]);
+        $tKeg = $cache['align_keg'][$kk];
+
+        $moved++;
+        if (! LaporanOppkpke::where('sub_kegiatan_id', $sk->id)->where('tahun', '!=', $tahun)->exists()) {
+            $sk->update(['kegiatan_id' => $tKeg->id]);
+            return $sk->id;
+        }
+
+        $twin = SubKegiatan::firstOrCreate(
+            ['kegiatan_id' => $tKeg->id, 'nama_sub_kegiatan' => $sk->nama_sub_kegiatan],
+            ['kode' => $sk->kode, 'is_active' => true]
+        );
+        // Data tahun ini ikut ke padanan (beserta realisasinya); tahun lain tetap di sub kegiatan asal.
+        $mine = LaporanOppkpke::where('sub_kegiatan_id', $sk->id)->where('tahun', $tahun)->first();
+        if ($mine) {
+            $theirs = LaporanOppkpke::where('sub_kegiatan_id', $twin->id)->where('tahun', $tahun)->first();
+            if (! $theirs) {
+                $mine->update(['sub_kegiatan_id' => $twin->id]);
+            } else {
+                if ((float) $theirs->realisasi_total <= 0 && (float) $mine->realisasi_total > 0) {
+                    $theirs->update($mine->only(['realisasi_sem1', 'realisasi_sem2', 'realisasi_total']));
+                }
+                $mine->delete();
+            }
+        }
+
+        return $twin->id;
     }
 
     // ══════════════════════════════════════════════════════════════

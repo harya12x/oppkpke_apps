@@ -61,6 +61,8 @@
                     var rincian = (data.updated || 0) + ' data diperbarui, ' + (data.imported || 0) + ' data baru ditambahkan'
                         + ((data.created_sk || 0) > 0 ? ', ' + data.created_sk + ' sub kegiatan baru' : '')
                         + ((data.resolved_ambig || 0) > 0 ? ', ' + data.resolved_ambig + ' ambigu dipilih manual' : '')
+                        + ((data.resolved_nf || 0) > 0 ? ', ' + data.resolved_nf + ' baris tidak cocok dipetakan/dibuat baru' : '')
+                        + ((data.created_hier || 0) > 0 ? ' (' + data.created_hier + ' sub kegiatan/hierarki baru)' : '')
                         + ((data.merged || 0) > 0 ? ', ' + data.merged + ' baris dijumlahkan ke sub kegiatan yang sama' : '')
                         + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
                         + ((data.skipped_ambig || 0) > 0 ? ', ' + data.skipped_ambig + ' ambigu dilewati' : '')
@@ -307,8 +309,16 @@
 <div class="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-xl p-3 mb-3 text-sm">
     <i class="fas fa-triangle-exclamation text-amber-500 text-base mt-0.5 flex-shrink-0"></i>
     <div>
-        <p class="font-semibold text-amber-800">{{ $stats['not_found'] }} baris tidak dapat dicocokkan dan akan dilewati</p>
-        <p class="text-amber-700 text-xs mt-0.5">Baris bertanda <span class="bg-red-100 text-red-700 rounded px-1">Tidak Cocok</span> tidak ditemukan di database maupun sebagai nama Kegiatan. Nama sub kegiatan di file berbeda dari yang ada di database.</p>
+        <p class="font-semibold text-amber-800">{{ $stats['not_found'] }} baris tidak cocok — realisasi Rp {{ number_format($stats['not_found_realisasi'] ?? 0, 0, ',', '.') }} belum ikut tersinkron</p>
+        <p class="text-amber-700 text-xs mt-0.5">
+            <strong>Kenapa tidak cocok?</strong> Sub kegiatan pada baris bertanda <span class="bg-red-100 text-red-700 rounded px-1">Tidak Cocok</span>
+            belum ada di database — alasan rinci & kandidat terdekat tampil di tiap baris (kolom <em>Sub Kegiatan (Database)</em>).
+        </p>
+        <p class="text-amber-700 text-xs mt-1">
+            <strong>Agar tersinkron penuh:</strong> pilih tindakannya — petakan ke sub kegiatan yang ada, atau <strong>"Buat baru"</strong>
+            (perangkat daerah/program/kegiatan dibuat otomatis seperti import RAT, di strategi sesuai kolom Strategi). Bila baris ini tercantum di RAT,
+            sebaiknya import RAT terbaru lebih dulu agar alokasinya ikut terisi.
+        </p>
     </div>
 </div>
 @endif
@@ -480,12 +490,14 @@
                             <i class="fas fa-copy text-[9px]"></i> Duplikat
                         </span>
                     @elseif($isAmbiguous)
-                        <span class="ambig-badge inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap">
-                            <i class="fas fa-circle-question text-[9px]"></i> <span class="ambig-badge-text">Ambigu</span>
+                        <span class="ambig-badge inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap"
+                              data-off="bg-yellow-100 text-yellow-800">
+                            <i class="fas fa-circle-question text-[9px]"></i> <span class="ambig-badge-text" data-label="Ambigu">Ambigu</span>
                         </span>
                     @else
-                        <span class="inline-flex items-center gap-1 bg-red-100 text-red-700 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap">
-                            <i class="fas fa-xmark text-[9px]"></i> Tidak Cocok
+                        <span class="ambig-badge inline-flex items-center gap-1 bg-red-100 text-red-700 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap"
+                              data-off="bg-red-100 text-red-700">
+                            <i class="fas fa-xmark text-[9px]"></i> <span class="ambig-badge-text" data-label="Tidak Cocok">Tidak Cocok</span>
                         </span>
                     @endif
                 </td>
@@ -540,7 +552,25 @@
                         </p>
                         <p class="text-[10px] text-orange-400 mt-0.5">ID: {{ $row['sub_kegiatan_id'] }} — nilainya digabung ke baris pertama</p>
                     @else
-                        <span class="text-red-400 text-[11px] italic">Tidak ditemukan di database</span>
+                        <div class="min-w-[280px] max-w-[380px]">
+                            <p class="text-red-700 font-semibold text-[11px]"><i class="fas fa-circle-xmark text-[9px] mr-0.5"></i> Kenapa tidak cocok?</p>
+                            <ul class="list-disc pl-4 mt-0.5 space-y-0.5 text-[10px] text-red-700">
+                                @forelse($row['nf_reasons'] ?? [] as $why)<li>{{ $why }}</li>@empty<li>Tidak ditemukan di database.</li>@endforelse
+                            </ul>
+                            <label class="block text-[10px] font-semibold text-gray-600 mt-1.5 mb-0.5">Tindakan:</label>
+                            <select class="ambig-select w-full border border-red-300 rounded px-1.5 py-1 text-[11px] text-gray-800 bg-white focus:ring-2 focus:ring-red-300"
+                                    data-row="{{ $row['row_num'] }}" onchange="impAmbigChange()">
+                                <option value="">— Lewati (tidak diimport) —</option>
+                                @foreach($row['nf_candidates'] ?? [] as $cand)
+                                    <option value="{{ $cand['id'] }}">
+                                        Petakan ke: {{ $cand['nama'] }} ({{ $cand['skor'] }}% mirip) — Kegiatan: {{ $cand['kegiatan'] ?: '—' }}{{ $cand['kode'] ? ' · kode ' . $cand['kode'] : '' }}{{ $cand['alokasi_db'] !== null ? ' · data ' . $tahun . ' ada' : '' }}
+                                    </option>
+                                @endforeach
+                                <option value="new" @disabled(!empty($row['strategi_warn']))>
+                                    ➕ Buat sub kegiatan baru (PD/Program/Kegiatan otomatis){{ !empty($row['strategi_warn']) ? ' — tidak bisa: strategi di file tak dikenali' : '' }}
+                                </option>
+                            </select>
+                        </div>
                     @endif
                 </td>
                 <td class="border border-gray-200 px-2 py-1.5 text-right font-mono text-blue-800 whitespace-nowrap text-[11px]">
@@ -787,7 +817,7 @@ function impRecalc() {
     el('imp-sum-note').innerHTML = gap < 1
         ? '<i class="fas fa-circle-check text-green-600 mr-1"></i>Seluruh realisasi di file akan tersinkron (100%).'
         : pct.toFixed(2).replace('.', ',') + '% tersinkron — belum ikut: '
-            + [ambigOpen ? ambigOpen + ' baris ambigu belum dipilih' : '',
+            + [ambigOpen ? ambigOpen + ' baris ambigu / tidak cocok belum dipilih tindakannya' : '',
                otherOut ? otherOut + ' baris tidak dicentang / tidak cocok' : ''].filter(Boolean).join(', ') + '.';
 }
 
@@ -796,12 +826,12 @@ function impAmbigChange() {
         var tr = s.closest('tr'), chosen = s.value !== '';
         var badge = tr.querySelector('.ambig-badge'), text = tr.querySelector('.ambig-badge-text');
         if (badge) {
-            badge.classList.toggle('bg-yellow-100', !chosen);
-            badge.classList.toggle('text-yellow-800', !chosen);
+            // Warna asal (kuning = ambigu, merah = tidak cocok) ↔ hijau bila sudah dipilih tindakannya.
+            (badge.dataset.off || '').split(' ').filter(Boolean).forEach(function (c) { badge.classList.toggle(c, !chosen); });
             badge.classList.toggle('bg-green-100', chosen);
             badge.classList.toggle('text-green-700', chosen);
         }
-        if (text) text.textContent = chosen ? 'Dipilih ✓' : 'Ambigu';
+        if (text) text.textContent = chosen ? 'Dipilih ✓' : (text.dataset.label || 'Ambigu');
     });
     updateImportCount();
 }

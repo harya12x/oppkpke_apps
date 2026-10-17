@@ -69,6 +69,7 @@
                         + ((data.created_pd || 0) > 0 ? ', ' + data.created_pd + ' perangkat daerah baru' : '')
                         + ((data.resolved_ambig || 0) > 0 ? ', ' + data.resolved_ambig + ' ambigu diselesaikan manual' : '')
                         + ((data.merged || 0) > 0 ? ', ' + data.merged + ' baris dijumlahkan ke sub kegiatan yang sama' : '')
+                        + ((data.strategi_dipindah || 0) > 0 ? ', ' + data.strategi_dipindah + ' sub kegiatan disesuaikan ke strategi RAT' : '')
                         + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
                         + (unresolved > 0 ? ', ' + unresolved + ' ambigu dilewati' : '')
                         + ', ' + totalSkip + ' dilewati.';
