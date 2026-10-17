@@ -25,13 +25,54 @@
 
 @push('styles')
 <style>
-    @media print {
-        .no-print { display: none !important; }
-        .print-break { page-break-before: always; }
-        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .shadow-lg, .shadow { box-shadow: none !important; }
-    }
     .pres-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 0.75rem; }
+
+    /* ── Cetak / PDF: laporan A4 tegak, tanpa bingkai aplikasi ─────────────── */
+    @page {
+        size: A4 portrait;
+        margin: 13mm 12mm 15mm;
+        /* Kotak margin sendiri menggantikan header/footer bawaan browser (tanggal, judul tab, URL). */
+        @top-left     { content: "\00a0"; }
+        @top-center   { content: "\00a0"; }
+        @top-right    { content: "\00a0"; }
+        @bottom-left  { content: "Ikhtisar Eksekutif OPPKPKE · Tahun Anggaran {{ $tahun }}"; font: 8pt Arial, sans-serif; color: #64748b; }
+        @bottom-right { content: "Halaman " counter(page) " dari " counter(pages); font: 8pt Arial, sans-serif; color: #64748b; }
+    }
+    @media print {
+        html, body { background: #fff !important; }
+        body { padding: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        /* Hanya isi laporan yang tercetak: sidebar, top bar, banner, nav bawah, modal, toast disembunyikan. */
+        body > *:not(main), main > *:not(.flex-1), .no-print { display: none !important; }
+        main { margin-left: 0 !important; min-height: 0 !important; display: block !important; }
+        main > .flex-1 { padding: 0 !important; }
+
+        #presentasi-root { font-size: 12px; }
+        #presentasi-root > * + * { margin-top: 12px !important; }
+        #presentasi-root > .no-print + * { margin-top: 0 !important; }
+        .shadow-lg, .shadow { box-shadow: none !important; }
+
+        /* Jangan potong kartu/baris di tengah halaman; judul tetap bersama isinya.
+           Tabel panjang (.print-split) boleh berlanjut ke halaman berikut — bingkai & judul kolomnya diulang. */
+        .pres-card, .print-keep, tr { break-inside: avoid; }
+        #presentasi-root .print-split { break-inside: auto; }
+        .pres-card { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+        h3, h4 { break-after: avoid; }
+        .print-break { break-before: page; }
+
+        /* Kertas lebih padat dari layar: jarak & padding diperkecil, ukuran huruf tetap terbaca. */
+        #presentasi-root .p-5, #presentasi-root .p-4 { padding: 13px 15px !important; }
+        #presentasi-root .p-3\.5 { padding: 9px 12px !important; }
+        #presentasi-root .leading-relaxed { line-height: 1.5 !important; }
+        #presentasi-root table { font-size: 11.5px; }
+        #presentasi-root td, #presentasi-root th { padding-top: 5px !important; padding-bottom: 5px !important; }
+
+        /* Teks terpotong (…) & gulir horizontal tidak berguna di kertas. */
+        #presentasi-root .truncate { overflow: visible; white-space: normal; text-overflow: clip; }
+        #presentasi-root td { max-width: none !important; }
+        #presentasi-root .overflow-x-auto, #presentasi-root .overflow-hidden { overflow: visible !important; }
+        #presentasi-root canvas { max-width: 100% !important; }
+    }
 </style>
 @endpush
 
@@ -58,9 +99,29 @@
         <div class="flex items-center gap-2">
             <span class="text-xs text-gray-400">Dihitung {{ $d['generated_at'] }}</span>
             <button onclick="window.print()"
+                    title="Tersusun otomatis sebagai laporan A4 tegak. Untuk PDF berwarna pilih tujuan 'Save as PDF'."
                     class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg shadow">
                 <i class="fas fa-print"></i> Cetak / PDF
             </button>
+        </div>
+    </div>
+
+    {{-- ── KOP LAPORAN (hanya saat cetak) ────────────────────────────── --}}
+    @php
+        $bulanId = [1 => 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+        $sekarang = now();
+    @endphp
+    <div class="hidden print:block">
+        <div class="flex items-end justify-between gap-4 border-b-2 border-slate-700 pb-2">
+            <div>
+                <p class="text-[10px] font-semibold tracking-wider text-slate-500 uppercase">OPPKPKE · Sistem Pengentasan Kemiskinan</p>
+                <h1 class="text-xl font-bold text-slate-800 leading-tight">Ikhtisar Eksekutif — Tahun Anggaran {{ $tahun }}</h1>
+                <p class="text-xs text-slate-500">Ringkasan anggaran pengentasan kemiskinan untuk pimpinan</p>
+            </div>
+            <div class="text-right text-[10px] text-slate-500 leading-relaxed whitespace-nowrap">
+                <p>Data dihitung: {{ $d['generated_at'] }}</p>
+                <p>Dicetak: <span id="tanggal-cetak">{{ $sekarang->day }} {{ $bulanId[$sekarang->month] }} {{ $sekarang->year }}, {{ $sekarang->format('H.i') }}</span></p>
+            </div>
         </div>
     </div>
 
@@ -172,7 +233,7 @@
         @endif
 
         {{-- Baca cepat: yang berjalan baik vs yang perlu perhatian --}}
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-px bg-gray-100 border-t border-gray-100">
+        <div class="grid grid-cols-1 lg:grid-cols-2 print:grid-cols-2 gap-px bg-gray-100 border-t border-gray-100">
             <div class="bg-white p-5 md:p-6">
                 <h4 class="text-xs font-bold text-green-700 mb-2"><i class="fas fa-circle-check mr-1"></i> Yang sudah berjalan baik</h4>
                 <ul class="space-y-1.5">
@@ -206,7 +267,7 @@
                 <span class="text-[11px] text-gray-500">dari {{ number_format($kl['baris'], 0, ',', '.') }} baris laporan</span>
                 <span class="ml-auto text-[11px] text-gray-400">Makin lengkap kolom ini, makin tajam ukuran outcome-nya.</span>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 print:grid-cols-6 gap-3">
                 @foreach($kl['detail'] as $f)
                     <div>
                         <div class="flex items-baseline justify-between gap-1">
@@ -222,18 +283,22 @@
                 @endforeach
             </div>
 
-            <details class="mt-4 group">
+            <details class="mt-4 group print:hidden">
                 <summary class="text-xs text-gray-500 cursor-pointer hover:text-blue-600 select-none">
                     <i class="fas fa-chevron-right text-[10px] mr-1 group-open:rotate-90 transition-transform"></i>
                     Baca narasi ringkasan versi lengkap
                 </summary>
                 <p class="text-sm leading-relaxed text-gray-700 mt-2 pl-4 border-l-2 border-gray-200">{{ $d['narasi'] }}</p>
             </details>
+            <div class="hidden print:block mt-3">
+                <p class="text-[11px] font-bold text-gray-600 mb-1">Narasi ringkasan</p>
+                <p class="text-xs leading-relaxed text-gray-700 pl-3 border-l-2 border-gray-300">{{ $d['narasi'] }}</p>
+            </div>
         </div>
     </div>
 
     {{-- ── 2. KPI CARDS ──────────────────────────────────────────── --}}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+    <div class="grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-3 md:gap-4 print-keep">
         <div class="pres-card p-4 md:p-5">
             <div class="flex items-center gap-2 mb-1.5">
                 <span class="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center text-sm"><i class="fas fa-wallet"></i></span>
@@ -279,7 +344,7 @@
             ['lbl' => 'Baris Laporan',    'val' => $k['total_laporan'], 'ic' => 'fa-table-list',       'col' => 'text-amber-600'],
         ];
     @endphp
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 md:grid-cols-4 print:grid-cols-4 gap-3 print-keep">
         @foreach($statSekunder as $st)
             <div class="pres-card p-3.5 flex items-center gap-3">
                 <i class="fas {{ $st['ic'] }} {{ $st['col'] }} text-lg"></i>
@@ -292,7 +357,7 @@
     </div>
 
     {{-- ── 3. BURN RATE + FORECAST ───────────────────────────────── --}}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 print:grid-cols-2 gap-4 print-keep print-break">
         {{-- Burn rate --}}
         @php $br = $d['burn_rate']; $devPos = $br['deviasi'] >= 0; @endphp
         <div class="pres-card p-5 shadow">
@@ -350,7 +415,7 @@
     </div>
 
     {{-- ── 4. GRAFIK: Strategi + Sumber Dana ─────────────────────── --}}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 print:grid-cols-2 gap-4 print-keep">
         <div class="pres-card p-5 shadow">
             <h3 class="text-sm font-bold text-gray-700 mb-3"><i class="fas fa-bullseye text-slate-500 mr-1"></i> Alokasi vs Realisasi per Strategi</h3>
             <div class="h-64 relative"><div class="chart-skeleton skeleton absolute inset-0"></div><canvas id="chartStrategi"></canvas></div>
@@ -363,7 +428,7 @@
     </div>
 
     {{-- ── 5. GRAFIK: YoY + Semester ─────────────────────────────── --}}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 print:grid-cols-2 gap-4 print-keep">
         <div class="pres-card p-5 shadow">
             <h3 class="text-sm font-bold text-gray-700 mb-3"><i class="fas fa-arrow-trend-up text-indigo-600 mr-1"></i> Perbandingan Antar Tahun</h3>
             <div class="h-56 relative"><div class="chart-skeleton skeleton absolute inset-0"></div><canvas id="chartYoy"></canvas></div>
@@ -411,7 +476,7 @@
     </div>
 
     {{-- ── 7. PER PERANGKAT DAERAH: tertinggi & terendah ─────────── --}}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 print:grid-cols-2 gap-4 print-keep">
         <div class="pres-card p-5 shadow">
             <h3 class="text-sm font-bold text-gray-700 mb-3"><i class="fas fa-trophy text-green-500 mr-1"></i> 5 PD Realisasi Tertinggi</h3>
             @include('oppkpke.partials.pd_list', ['rows' => $d['pd_tertinggi'], 'rp' => $rp, 'warna' => $warna])
@@ -423,7 +488,7 @@
     </div>
 
     {{-- ── 8. VARIANCE: Under & Over budget ──────────────────────── --}}
-    <div class="pres-card p-5 shadow print-break">
+    <div class="pres-card p-5 shadow print-split">
         <h3 class="text-sm font-bold text-gray-700 mb-1"><i class="fas fa-scale-balanced text-amber-500 mr-1"></i> Analisis Serapan Program (Variance)</h3>
         <p class="text-[11px] text-gray-400 mb-3">Program dengan serapan terendah — fokus utama percepatan.</p>
         <div class="overflow-x-auto">
@@ -542,6 +607,8 @@
     if (typeof Chart === 'undefined') { return; }
     Chart.defaults.font.size = 11;
     Chart.defaults.color = '#475569';
+    // Resolusi minimal 2× agar grafik tetap tajam saat dicetak / disimpan PDF.
+    Chart.defaults.devicePixelRatio = Math.max(window.devicePixelRatio || 1, 2);
 
     // 1. Strategi — bar alokasi vs realisasi
     new Chart(document.getElementById('chartStrategi'), {
@@ -621,6 +688,27 @@
 
     // Grafik selesai digambar → hilangkan skeleton.
     hideSkeletons();
+
+    // Saat cetak, lebar kolom berubah (A4 tegak) → gambar ulang grafik mengikuti ukuran kertas,
+    // tanpa animasi agar tidak tertangkap setengah jadi. Setelah cetak, kembali ke ukuran layar.
+    const charts = Object.values(Chart.instances);
+    const redraw = (printing) => charts.forEach(c => {
+        if (printing) c.options.animation = false;
+        // Kolom kertas lebih sempit → legenda doughnut pindah ke bawah agar label tidak terpotong.
+        if (c.config.type === 'doughnut') c.options.plugins.legend.position = printing ? 'bottom' : 'right';
+        c.stop();             // hentikan animasi yang masih berjalan (cetak segera setelah halaman dibuka)
+        c.resize();
+        c.update('none');     // gambar keadaan akhir seketika
+    });
+    // Dibuka langsung dalam mode cetak (mis. alat PDF) → tanpa animasi sejak awal.
+    if (window.matchMedia('print').matches) redraw(true);
+    window.addEventListener('beforeprint', () => {
+        redraw(true);
+        const el = document.getElementById('tanggal-cetak');
+        if (el) el.textContent = new Date().toLocaleString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    });
+    window.addEventListener('afterprint', () => redraw(false));
+    window.matchMedia('print').addEventListener('change', (e) => redraw(e.matches));
 })();
 </script>
 @endpush

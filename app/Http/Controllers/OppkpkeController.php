@@ -906,16 +906,50 @@ class OppkpkeController extends Controller
             'not_found'  => $coll->where('status', 'not_found')->count(),
             'duplicate'  => $coll->where('status', 'duplicate')->count(),
             'new_sk'     => $coll->where('status', 'new_sk')->count(),
+            'ambiguous'  => $coll->where('status', 'ambiguous')->count(),
             'update'     => $coll->where('status', 'matched')->where('has_existing', true)->count(),
             'new_record' => $coll->where('status', 'matched')->where('has_existing', false)->count(),
+            // Realisasi seluruh file (duplikat sudah digabung ke baris pertamanya).
+            'realisasi_file' => (float) $coll->where('status', '!=', 'duplicate')->sum('realisasi_total'),
         ];
+        // Tahun ini sudah berisi data perencanaan (mis. hasil import RAT) → default mode
+        // "Realisasi saja" agar alokasi & data perencanaan tidak tertimpa file ini.
+        $hasPlanData = LaporanOppkpke::where('tahun', $tahun)->exists();
 
-        return view('oppkpke.import', compact('matchedRows', 'stats', 'tahun', 'semester', 'cacheKey'));
+        return view('oppkpke.import', compact('matchedRows', 'stats', 'tahun', 'semester', 'cacheKey', 'hasPlanData'));
+    }
+
+    /**
+     * Terapkan pilihan admin untuk baris ambigu: id sub kegiatan (wajib salah satu
+     * kandidat baris itu) atau 'new' bila $allowNew. Pilihan lain diabaikan → dilewati.
+     */
+    private function applyAmbiguityChoices(array $rows, array $resolve, bool $allowNew): array
+    {
+        foreach ($rows as &$row) {
+            if ($row['status'] !== 'ambiguous') continue;
+            $choice = (string) ($resolve[$row['row_num']] ?? '');
+            $ids    = array_column($row['ambig_candidates'] ?? [], 'id');
+            if ($allowNew && $choice === 'new') {
+                $row['resolved_to'] = 'new';
+            } elseif (ctype_digit($choice) && in_array((int) $choice, $ids, true)) {
+                $row['resolved_to'] = (int) $choice;
+            }
+        }
+        unset($row);
+
+        return $rows;
     }
 
     public function importExecute(Request $request)
     {
-        $request->validate(['cache_key' => 'required|string']);
+        $request->validate([
+            'cache_key'    => 'required|string',
+            'mode'         => 'nullable|in:realisasi,lengkap',
+            'resolve'      => 'nullable|array',
+            'resolve.*'    => 'nullable|string|max:20',
+            'import_ids'   => 'nullable|array',
+            'import_ids.*' => 'nullable|string|max:20',
+        ]);
 
         // Idempotency gate: ambil + hapus cache key SEBELUM proses apa pun dimulai
         // (bukan di akhir seperti sebelumnya) — mempersempit jendela race double-submit
@@ -926,13 +960,29 @@ class OppkpkeController extends Controller
             return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa atau sudah diproses. Silakan upload ulang.']);
         }
 
+        $cached['mode'] = $request->input('mode', 'lengkap');
+        $cached['rows'] = $this->applyAmbiguityChoices($cached['rows'], (array) $request->input('resolve', []), false);
+
+        // Baris yang TIDAK dicentang di preview dilewati. (Dulu centang dikirim sebagai
+        // import_ids[] tetapi server hanya membaca skip[] — hilangkan centang tak berefek.)
+        $skip = (array) $request->input('skip', []);
+        if ($request->has('import_ids')) {
+            $checked = array_map('strval', (array) $request->input('import_ids', []));
+            foreach ($cached['rows'] as $row) {
+                if (in_array($row['status'], ['matched', 'new_sk'], true) && ! in_array((string) $row['row_num'], $checked, true)) {
+                    $skip[] = (string) $row['row_num'];
+                }
+            }
+        }
+
         $statusKey = 'oppkpke_import_status_' . auth()->id() . '_' . uniqid();
         cache()->put($statusKey, ['state' => 'processing'], now()->addHour());
 
         ProcessLaporanImportJob::dispatch(
             $cached,
-            $request->input('skip', []),
-            $request->boolean('replace_year'),
+            array_values(array_unique($skip)),
+            // Mode "Realisasi saja" tidak pernah menghapus data tahun ini (data RAT aman).
+            $cached['mode'] === 'lengkap' && $request->boolean('replace_year'),
             auth()->id(),
             $statusKey
         );
@@ -1013,6 +1063,7 @@ class OppkpkeController extends Controller
             'duplicate'  => $coll->where('status', 'duplicate')->count(),
             'new_sk'     => $coll->where('status', 'new_sk')->count(),
             'ambiguous'  => $coll->where('status', 'ambiguous')->count(),
+            'ambiguous_alokasi' => (float) $coll->where('status', 'ambiguous')->sum('alokasi_anggaran'),
             'strategi_warn' => $coll->where('status', 'not_found')->filter(fn ($r) => ! empty($r['strategi_warn']))->count(),
             'update'     => $coll->where('status', 'matched')->where('has_existing', true)->count(),
             'new_record' => $coll->where('status', 'matched')->where('has_existing', false)->count(),
@@ -1023,13 +1074,19 @@ class OppkpkeController extends Controller
 
     public function importRatExecute(Request $request)
     {
-        $request->validate(['cache_key' => 'required|string']);
+        $request->validate([
+            'cache_key' => 'required|string',
+            'resolve'   => 'nullable|array',
+            'resolve.*' => 'nullable|string|max:20',
+        ]);
 
         // Idempotency gate — lihat catatan di importExecute().
         $cached = cache()->pull($request->cache_key);
         if (!$cached) {
             return back()->withErrors(['error' => 'Sesi preview sudah kedaluwarsa atau sudah diproses. Silakan upload ulang.']);
         }
+
+        $cached['rows'] = $this->applyAmbiguityChoices($cached['rows'], (array) $request->input('resolve', []), true);
 
         $statusKey = 'oppkpke_rat_status_' . auth()->id() . '_' . uniqid();
         cache()->put($statusKey, ['state' => 'processing'], now()->addHour());
@@ -1047,7 +1104,12 @@ class OppkpkeController extends Controller
             ->with('import_status_key', $statusKey);
     }
 
-    private function parseRatFile(string $filePath, string $ext): array
+    /**
+     * Baca matriks RAT (18 kolom A–R) atau — bila $withRealisasi — matriks OPPKPKE
+     * (21 kolom: + S=Realisasi Sem.1, T=Sem.2, U=Total). Satu parser untuk keduanya
+     * agar aturan kode, pewarisan konteks, dan rumus Excel diperlakukan sama.
+     */
+    private function parseRatFile(string $filePath, string $ext, bool $withRealisasi = false): array
     {
         if ($ext === 'csv' || $ext === 'txt') {
             $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
@@ -1066,7 +1128,7 @@ class OppkpkeController extends Controller
         $maxRow      = $sheet->getHighestRow();
 
         // Normalize a cell value to a plain trimmed string
-        $cell = fn(string $col, int $row) => trim((string) $sheet->getCell($col . $row)->getValue());
+        $cell = fn(string $col, int $row) => trim((string) $this->cellValue($sheet, $col . $row));
 
         // ── Robust dataStartRow detection ─────────────────────────────────
         // Strategy 1: numbering row "1  2  3 ..." — handle "1", "1.", "(1)"
@@ -1122,7 +1184,7 @@ class OppkpkeController extends Controller
             $headerWords = ['no', 'strategi', 'perangkat', 'kegiatan', 'alokasi', 'sub kegiatan', 'program', 'kode', 'sumber'];
             for ($r = 2; $r <= min($maxRow, 40); $r++) {
                 $g = $cell('G', $r);
-                $k = $this->parseCellNumber($sheet->getCell('K' . $r)->getValue(), $cell('K', $r));
+                $k = $this->parseCellNumber($this->cellValue($sheet, 'K' . $r), $cell('K', $r));
                 if ($g !== '' && $k > 0 && !in_array(strtolower($g), $headerWords, true)) {
                     $dataStartRow = $r;
                     break;
@@ -1141,6 +1203,8 @@ class OppkpkeController extends Controller
         $currentKode     = '';
         $currentProgram  = '';
         $currentKegiatan = '';
+        $currentProgKode = '';
+        $currentKegKode  = '';
         $rows            = [];
 
         for ($r = $dataStartRow; $r <= $maxRow; $r++) {
@@ -1199,30 +1263,49 @@ class OppkpkeController extends Controller
 
             // Inherit hierarchical context from filled columns
             if ($colB !== '' && stripos($colB, 'strategi') === false) $currentStrategi = $colB;
+            // Ganti perangkat daerah → kode/program/kegiatan PD sebelumnya tidak boleh terbawa
+            // (dulu membuat mis. BPBD tercatat di program "Air Limbah" milik PU).
+            if ($colC !== '' && $colC !== $currentPd) {
+                $currentKode = $currentProgram = $currentKegiatan = $currentProgKode = $currentKegKode = '';
+            }
             if ($colC !== '') $currentPd       = $colC;
             if ($colD !== '') $currentKode     = $colD;
-            if ($colE !== '') $currentProgram  = $colE;
-            if ($colF !== '') $currentKegiatan = $colF;
+            if ($colE !== '') { $currentProgram  = $colE; $currentProgKode = (string) $progKodeFromE; }
+            if ($colF !== '') { $currentKegiatan = $colF; $currentKegKode  = (string) $kegKodeFromF; }
 
             // Kode sub kegiatan Permendagri (mis. "1.02.02.2.01.0014") memuat kode
             // program (3 segmen pertama) & kegiatan (5 segmen). Turunkan agar tiap
             // level punya kodenya sendiri — tidak menyamakan kode sub = kode program.
             [$derivProg, $derivKeg] = $this->deriveHierarchyCodes($skKodeFromG);
 
+            // Program/kegiatan warisan baris sebelumnya hanya dipakai bila kodenya sejalan
+            // dengan kode sub kegiatan baris ini (sub 1.03.06.* tidak mewarisi kegiatan 1.03.05.*).
+            $rowProgram  = ($colE === '' && $currentProgKode !== '' && $derivProg && $currentProgKode !== $derivProg) ? '' : $currentProgram;
+            $rowKegiatan = ($colF === '' && $currentKegKode !== '' && $derivKeg && $currentKegKode !== $derivKeg) ? '' : $currentKegiatan;
+
             $kodeProgram  = $currentKode !== '' ? $currentKode : ($progKodeFromE ?: ($derivProg ?? ''));
             $kodeKegiatan = $kegKodeFromF ?: ($derivKeg ?? '');
             $kodeSub      = $skKodeFromG ?? '';
 
-            $alokasi = $this->parseCellNumber($sheet->getCell('K' . $r)->getValue(), $colK);
+            $alokasi = $this->parseCellNumber($this->cellValue($sheet, 'K' . $r), $colK);
+
+            $sem1 = $sem2 = $total = 0.0;
+            if ($withRealisasi) {
+                $sem1  = $this->parseCellNumber($this->cellValue($sheet, 'S' . $r), $cell('S', $r));
+                $sem2  = $this->parseCellNumber($this->cellValue($sheet, 'T' . $r), $cell('T', $r));
+                $total = $this->parseCellNumber($this->cellValue($sheet, 'U' . $r), $cell('U', $r));
+                if ($total <= 0 && ($sem1 + $sem2) > 0) $total = $sem1 + $sem2;
+            }
 
             $rows[] = [
+                'excel_row'                => $r,
                 'strategi'                 => $currentStrategi,
                 'perangkat_daerah'         => $currentPd,
                 'kode'                     => $kodeProgram,          // kode PROGRAM (kolom D / turunan)
                 'kode_kegiatan'            => $kodeKegiatan,         // kode KEGIATAN (turunan/prefix F)
                 'kode_sub'                 => $kodeSub,              // kode SUB KEGIATAN (prefix kolom G)
-                'program'                  => $currentProgram,
-                'kegiatan'                 => $currentKegiatan,
+                'program'                  => $rowProgram,
+                'kegiatan'                 => $rowKegiatan,
                 'sub_kegiatan'             => $colG,
                 'aktivitas_langsung'       => $colH,
                 'aktivitas_tidak_langsung' => $colI,
@@ -1235,9 +1318,9 @@ class OppkpkeController extends Controller
                 'besaran_manfaat'          => $colP,
                 'jenis_bantuan'            => $colQ,
                 'durasi_pemberian'         => $colR,
-                'realisasi_sem1'           => 0,
-                'realisasi_sem2'           => 0,
-                'realisasi_total'          => 0,
+                'realisasi_sem1'           => $sem1,
+                'realisasi_sem2'           => $sem2,
+                'realisasi_total'          => $total,
             ];
         }
 
@@ -1246,114 +1329,24 @@ class OppkpkeController extends Controller
 
     private function parseMatrixFile(string $filePath, string $ext): array
     {
-        if ($ext === 'csv' || $ext === 'txt') {
-            $reader = new \PhpOffice\PhpSpreadsheet\Reader\Csv();
-            $reader->setDelimiter(',');
-            $reader->setEnclosure('"');
-            $reader->setInputEncoding('UTF-8');
-        } elseif ($ext === 'xls') {
-            $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xls();
-        } else {
-            $reader = new \PhpOffice\PhpSpreadsheet\Reader\Xlsx();
+        return $this->parseRatFile($filePath, $ext, true);
+    }
+
+    /**
+     * Nilai sel siap pakai: untuk sel berumus dipakai HASIL rumusnya. Dulu teks rumus
+     * ikut diurai jadi angka — "=SUM(S6:T6)" terbaca Rp 66 sebagai Total Realisasi.
+     */
+    private function cellValue(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, string $coord)
+    {
+        $cell = $sheet->getCell($coord);
+        if (! $cell->isFormula()) {
+            return $cell->getValue();
         }
-
-        $reader->setReadDataOnly(true);
-        $spreadsheet = $reader->load($filePath);
-        $sheet       = $spreadsheet->getActiveSheet();
-        $maxRow      = $sheet->getHighestRow();
-        $colLetters  = range('A', 'U'); // 21 columns A–U
-
-        // Find data start: look for the "1  2  3 ... 21" number header row
-        $dataStartRow = 7;
-        for ($r = 1; $r <= min($maxRow, 25); $r++) {
-            $a = trim((string) $sheet->getCell('A' . $r)->getValue());
-            $b = trim((string) $sheet->getCell('B' . $r)->getValue());
-            if ($a === '1' && ($b === '2' || $b === '')) {
-                // Check if this is the column-number row (1,2,3...)
-                $c3 = trim((string) $sheet->getCell('C' . $r)->getValue());
-                if ($c3 === '3' || $b === '2') {
-                    $dataStartRow = $r + 1;
-                    break;
-                }
-            }
-            // Also detect by "No" label in A
-            if (strtolower($a) === 'no' && stripos($b, 'strategi') !== false) {
-                for ($r2 = $r + 1; $r2 <= $r + 6; $r2++) {
-                    $a2 = trim((string) $sheet->getCell('A' . $r2)->getValue());
-                    $b2 = trim((string) $sheet->getCell('B' . $r2)->getValue());
-                    if ($a2 === '1' && $b2 === '2') { $dataStartRow = $r2 + 1; break 2; }
-                }
-            }
+        try {
+            return $cell->getCalculatedValue();
+        } catch (\Throwable) {
+            return $cell->getOldCalculatedValue();   // nilai tersimpan dari Excel
         }
-
-        $currentStrategi = '';
-        $currentPd       = '';
-        $currentKode     = '';
-        $currentProgram  = '';
-        $currentKegiatan = '';
-        $rows            = [];
-
-        for ($r = $dataStartRow; $r <= $maxRow; $r++) {
-            $col = [];
-            foreach ($colLetters as $letter) {
-                $raw   = $sheet->getCell($letter . $r)->getValue();
-                $col[] = is_null($raw) ? '' : trim((string) $raw);
-            }
-
-            // Skip fully empty rows
-            if (count(array_filter($col, fn($v) => $v !== '')) < 2) continue;
-
-            // Stop at "Keterangan" footnote section
-            if (stripos($col[0], 'Keterangan') !== false || stripos($col[1], 'Keterangan') !== false) break;
-
-            // Strategi header: col B has text, col G empty, col K empty
-            if ($col[1] !== '' && $col[6] === '' && $col[10] === '') {
-                $currentStrategi = $col[1];
-                continue;
-            }
-
-            // Data row needs a sub_kegiatan name (col G, index 6)
-            if ($col[6] === '') continue;
-
-            // Parse numeric values — prefer raw getValue() for XLSX numeric cells
-            $alokasi = $this->parseCellNumber($sheet->getCell('K' . $r)->getValue(), $col[10]);
-            $sem1    = $this->parseCellNumber($sheet->getCell('S' . $r)->getValue(), $col[18]);
-            $sem2    = $this->parseCellNumber($sheet->getCell('T' . $r)->getValue(), $col[19] ?? '');
-            $total   = $this->parseCellNumber($sheet->getCell('U' . $r)->getValue(), $col[20] ?? '');
-
-            if ($total <= 0 && ($sem1 + $sem2) > 0) $total = $sem1 + $sem2;
-
-            // Inherit hierarchical context from non-empty cells
-            if ($col[2] !== '') $currentPd       = $col[2];
-            if ($col[3] !== '') $currentKode     = $col[3];
-            if ($col[4] !== '') $currentProgram  = $col[4];
-            if ($col[5] !== '') $currentKegiatan = $col[5];
-
-            $rows[] = [
-                'strategi'                 => $currentStrategi,
-                'perangkat_daerah'         => $currentPd,
-                'kode'                     => $currentKode,
-                'program'                  => $currentProgram,
-                'kegiatan'                 => $currentKegiatan,
-                'sub_kegiatan'             => $col[6],
-                'aktivitas_langsung'       => $col[7],
-                'aktivitas_tidak_langsung' => $col[8],
-                'aktivitas_penunjang'      => $col[9],
-                'alokasi_anggaran'         => $alokasi,
-                'sumber_pembiayaan'        => $col[11] ?: 'APBD',
-                'sifat_bantuan'            => $col[12],
-                'lokasi'                   => $col[13],
-                'jumlah_sasaran'           => $col[14],
-                'besaran_manfaat'          => $col[15],
-                'jenis_bantuan'            => $col[16],
-                'durasi_pemberian'         => $col[17],
-                'realisasi_sem1'           => $sem1,
-                'realisasi_sem2'           => $sem2,
-                'realisasi_total'          => $total,
-            ];
-        }
-
-        return $rows;
     }
 
     /**
@@ -1423,10 +1416,50 @@ class OppkpkeController extends Controller
         $allKegiatan    = Kegiatan::with(['program.perangkatDaerah', 'program.strategi'])->get();
         $kegiatanByName = $allKegiatan->groupBy(fn($k) => $this->normalizeSkName($k->nama_kegiatan));
 
-        $existingIds = LaporanOppkpke::where('tahun', $tahun)->pluck('sub_kegiatan_id')->flip();
+        $existingAlok = LaporanOppkpke::where('tahun', $tahun)->pluck('alokasi_anggaran', 'sub_kegiatan_id');
+        $existingIds  = $existingAlok->keys()->flip();
 
         // Normalisasi PD (buang tanda baca) — konsisten dgn forceCreateSkFromRow.
         $pdNorm = fn (string $s) => trim(preg_replace('/\s+/', ' ', strtolower(preg_replace('/[^a-z0-9]+/i', ' ', $s))));
+
+        // Kode kegiatan: kolom kode-nya, atau — bila kosong — diturunkan dari kode sub
+        // kegiatan anak-anaknya (5 segmen pertama) asalkan seragam.
+        $kegCodeById = [];
+        foreach ($allSk->groupBy('kegiatan_id') as $kegId => $subs) {
+            $own = trim((string) optional($subs->first()->kegiatan)->kode);
+            if ($own !== '') { $kegCodeById[$kegId] = $own; continue; }
+            $prefixes = $subs->map(fn ($sk) => $this->deriveHierarchyCodes(trim((string) $sk->kode) ?: null)[1])->filter()->unique();
+            if ($prefixes->count() === 1) $kegCodeById[$kegId] = $prefixes->first();
+        }
+
+        // Skor kemiripan nama 0..1 (input sudah $pdNorm). Fuzzy hanya menerima nama yang
+        // memang sama — salah ketik, singkatan, atau nama terpotong — bukan sub kegiatan
+        // "saudara" yang kebetulan berawalan sama ("... Usia Lanjut" vs "... Usia Produktif").
+        $nameScore = function (string $a, string $b): float {
+            if ($a === '' || $b === '') return 0.0;
+            if ($a === $b) return 1.0;
+            [$short, $long] = strlen($a) <= strlen($b) ? [$a, $b] : [$b, $a];
+            if (strlen($short) >= 25 && str_starts_with($long, $short . ' ')) return 0.95;
+            return 1 - levenshtein($a, $b) / max(strlen($a), strlen($b));
+        };
+
+        // Apakah kegiatan kandidat sama dengan kolom Kegiatan di file?
+        // null = tak diketahui (kegiatan placeholder "Kegiatan <nama sub>" buatan import lama).
+        $kegFit = function ($sk, string $rowKegKey) use ($pdNorm, $nameScore): ?bool {
+            $kn = $pdNorm((string) optional($sk->kegiatan)->nama_kegiatan);
+            $sn = $pdNorm((string) $sk->nama_sub_kegiatan);
+            if ($kn === '' || ($sn !== '' && str_contains($kn, $sn))) return null;
+            if ($kn === $rowKegKey) return true;
+            [$short, $long] = strlen($kn) <= strlen($rowKegKey) ? [$kn, $rowKegKey] : [$rowKegKey, $kn];
+            if (strlen($short) >= 15 && str_contains($long, $short)) return true;
+            // Seluruh kata nama yang lebih pendek (min. 3 kata) ada di nama lain — mis. singkatan:
+            // "Pengelolaan Pendidikan PAUD" ⊂ "Pengelolaan Pendidikan Anak Usia Dini (PAUD)".
+            $ta = explode(' ', $kn);
+            $tb = explode(' ', $rowKegKey);
+            [$ts, $tl] = count($ta) <= count($tb) ? [$ta, $tb] : [$tb, $ta];
+            if (count($ts) >= 3 && ! array_diff($ts, $tl)) return true;
+            return $nameScore($kn, $rowKegKey) >= 0.85;
+        };
         // Cocok PD: baris yang menyebut PD WAJIB sama PD-nya; baris tanpa PD tak membatasi.
         $pdMatch = function ($skPdName, string $rowPd) use ($pdNorm) {
             if ($rowPd === '') return true;
@@ -1499,11 +1532,99 @@ class OppkpkeController extends Controller
             return $cands->first();
         };
 
+        // Pertajam kandidat bernama sama memakai data baris itu sendiri (bukan menebak):
+        // kode sub → kode kegiatan → nama kegiatan → kode program.
+        // Hasil: ['match' => sk|null, 'pool' => sisa kandidat, 'other_keg' => bool].
+        // other_keg = semua kandidat ada di kegiatan LAIN dari kolom Kegiatan file → baris ini sub baru.
+        $narrow = function ($pool, array $raw) use ($kegCodeById, $kegFit, $pdNorm, $existingIds) {
+            $kodeSub = trim((string) ($raw['kode_sub'] ?? ''));
+            $kodeKeg = trim((string) ($raw['kode_kegiatan'] ?? ''));
+            $kode    = trim((string) ($raw['kode'] ?? ''));
+            $rowKeg  = $pdNorm((string) ($raw['kegiatan'] ?? ''));
+
+            $steps = [
+                fn ($sk) => $kodeSub !== '' && strcasecmp(trim((string) $sk->kode), $kodeSub) === 0,
+                fn ($sk) => $kodeKeg !== '' && strcasecmp((string) ($kegCodeById[$sk->kegiatan_id] ?? ''), $kodeKeg) === 0,
+            ];
+            foreach ($steps as $step) {
+                $hit = $pool->filter($step)->values();
+                if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
+                if ($hit->count() > 1) $pool = $hit;
+            }
+
+            if ($rowKeg !== '') {
+                $fit     = $pool->filter(fn ($sk) => $kegFit($sk, $rowKeg) === true)->values();
+                $unknown = $pool->filter(fn ($sk) => $kegFit($sk, $rowKeg) === null)->values();
+                $hit     = $fit->isNotEmpty() ? $fit : $unknown;
+                if ($hit->isEmpty()) return ['match' => null, 'pool' => $pool, 'other_keg' => true];
+                if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
+                $pool = $hit;
+            }
+
+            if ($kode !== '') {
+                $hit = $pool->filter(fn ($sk) => optional($sk->kegiatan?->program)->kode_program === $kode)->values();
+                if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
+                if ($hit->count() > 1) $pool = $hit;
+            }
+
+            // Terakhir: satu-satunya kandidat yang sudah punya data tahun ini (mis. hasil
+            // import RAT) — realisasi ikut ke sub kegiatan tempat alokasinya tercatat.
+            $hit = $pool->filter(fn ($sk) => isset($existingIds[$sk->id]))->values();
+            if ($hit->count() === 1) return ['match' => $hit->first(), 'pool' => $hit, 'other_keg' => false];
+
+            return ['match' => null, 'pool' => $pool, 'other_keg' => false];
+        };
+
+        // Penjelasan baris ambigu + daftar kandidat agar admin bisa memilih di preview.
+        $describeAmbig = function ($pool, array $raw, string $kind) use ($kegCodeById, $skPd, $existingAlok) {
+            $rowPd   = trim((string) ($raw['perangkat_daerah'] ?? ''));
+            $kodeSub = trim((string) ($raw['kode_sub'] ?? ''));
+            $kodeKeg = trim((string) ($raw['kode_kegiatan'] ?? ''));
+            $pdLabel = $rowPd !== '' ? $rowPd : 'semua perangkat daerah (baris tidak menyebut PD)';
+
+            $reasons   = [];
+            $reasons[] = $kind === 'fuzzy'
+                ? 'Nama tidak ada persis di database, tetapi hampir sama dengan ' . $pool->count() . ' sub kegiatan di ' . $pdLabel . '.'
+                : 'Ada ' . $pool->count() . ' sub kegiatan bernama sama di ' . $pdLabel . ' (beda kegiatan/program).';
+
+            if ($kodeSub === '') {
+                $reasons[] = 'File tidak mencantumkan kode sub kegiatan, jadi tidak bisa dibedakan lewat kode.';
+            } elseif ($pool->every(fn ($sk) => trim((string) $sk->kode) === '')) {
+                $reasons[] = 'Kode ' . $kodeSub . ' dari file belum tersimpan di kandidat mana pun (kode sub kegiatan di database masih kosong).';
+            } else {
+                $reasons[] = 'Kode ' . $kodeSub . ' dari file tidak cocok dengan kode kandidat.';
+            }
+            if ($kodeKeg !== '' && $pool->every(fn ($sk) => empty($kegCodeById[$sk->kegiatan_id]))) {
+                $reasons[] = 'Kegiatan kandidat belum punya kode, sehingga kode kegiatan ' . $kodeKeg . ' tidak bisa dipakai pembeda.';
+            }
+            $reasons[] = trim((string) ($raw['kegiatan'] ?? '')) === ''
+                ? 'Kolom Kegiatan di file kosong, jadi tidak bisa dibedakan dari nama kegiatan.'
+                : 'Nama kegiatan di file cocok dengan lebih dari satu kandidat.';
+            $withData = $pool->filter(fn ($sk) => $existingAlok->has($sk->id))->count();
+            $reasons[] = $withData === 0
+                ? 'Belum ada kandidat yang punya data tahun ini (mis. dari import RAT) untuk dijadikan acuan.'
+                : $withData . ' kandidat sama-sama sudah punya data tahun ini — kemungkinan sub kegiatan ganda di database.';
+
+            $candidates = $pool->map(fn ($sk) => [
+                'id'            => $sk->id,
+                'nama'          => $sk->nama_sub_kegiatan,
+                'kode'          => trim((string) $sk->kode) ?: null,
+                'kegiatan_id'   => $sk->kegiatan_id,
+                'kegiatan'      => optional($sk->kegiatan)->nama_kegiatan,
+                'kegiatan_kode' => $kegCodeById[$sk->kegiatan_id] ?? null,
+                'program'       => trim(optional($sk->kegiatan?->program)->kode_program . ' ' . optional($sk->kegiatan?->program)->nama_program),
+                'pd'            => $skPd($sk),
+                'alokasi_db'    => $existingAlok->has($sk->id) ? (float) $existingAlok[$sk->id] : null,
+                'claimed_by'    => null, // diisi setelah semua baris dicocokkan
+            ])->sortBy('kegiatan')->values()->all();
+
+            return ['ambig_kind' => $kind, 'ambig_reasons' => $reasons, 'ambig_candidates' => $candidates];
+        };
+
         foreach ($rawRows as $raw) {
             $rowNum++;
             $normalized = $this->normalizeSkName($raw['sub_kegiatan']);
             $kode       = trim($raw['kode']);
-            $kodeSub    = trim((string) ($raw['kode_sub'] ?? ''));
             $rowPd      = trim($raw['perangkat_daerah']);
 
             // Resolusi strategi dari file (kode/nama) untuk tampilan preview.
@@ -1511,29 +1632,43 @@ class OppkpkeController extends Controller
             $raw['strategi_file'] = $stratObj?->nama;
 
             $matched   = null;
-            $ambiguous = false;
+            $ambigPool = null;
+            $ambigKind = 'exact';
+            $otherKeg  = false;
 
             // ── Cocokkan sub kegiatan (WAJIB cocok PD bila baris menyebut PD) ──
             $candidates = $skByName->get($normalized, collect())
                 ->filter(fn ($sk) => $pdMatch($skPd($sk), $rowPd))->values();
 
             if ($candidates->count() === 1) {
-                $matched = $candidates->first();
+                // Nama sama tetapi kode KEGIATAN-nya berbeda (keduanya kode baku) → sub kegiatan lain,
+                // mis. "…Kemitraan Usaha" untuk nelayan (3.25.03.2.02) vs pembudi daya (3.25.04.2.02).
+                $only   = $candidates->first();
+                $rowSub = trim((string) ($raw['kode_sub'] ?? ''));
+                $dbSub  = trim((string) $only->kode);
+                $std    = '/^\d\.\d{2}\.\d{2}\.\d\.\d{2}\.\d{4}$/';
+                if (preg_match($std, $rowSub) && preg_match($std, $dbSub)
+                    && $this->deriveHierarchyCodes($rowSub)[1] !== $this->deriveHierarchyCodes($dbSub)[1]) {
+                    $otherKeg = true;
+                    $raw['match_note'] = "Nama sama dengan sub kegiatan berkode {$dbSub} (kegiatan lain), sedangkan kode di file {$rowSub} — dibuat sebagai sub kegiatan tersendiri.";
+                } else {
+                    $matched = $only;
+                }
             } elseif ($candidates->count() > 1) {
-                // Pertajam: KODE SUB KEGIATAN (paling spesifik) → lalu kode program.
-                if ($kodeSub !== '') {
-                    $bySub = $candidates->filter(fn ($sk) => trim((string) $sk->kode) !== '' && strcasecmp(trim((string) $sk->kode), $kodeSub) === 0);
-                    if ($bySub->count() === 1) $matched = $bySub->first();
+                $n = $narrow($candidates, $raw);
+                $matched  = $n['match'];
+                $otherKeg = $n['other_keg'];
+                if (! $matched && ! $otherKeg) $ambigPool = $n['pool'];   // jangan menebak — biar admin putuskan
+                if ($otherKeg) {
+                    $raw['match_note'] = 'Nama sama sudah ada di kegiatan lain ('
+                        . $candidates->map(fn ($sk) => optional($sk->kegiatan)->nama_kegiatan)->filter()->unique()->implode('; ')
+                        . ') — dibuat sebagai sub kegiatan tersendiri di kegiatan sesuai file.';
                 }
-                if (! $matched && $kode !== '') {
-                    $byKode = $candidates->filter(fn ($sk) => optional($sk->kegiatan?->program)->kode_program === $kode);
-                    if ($byKode->count() === 1) $matched = $byKode->first();
-                }
-                if (! $matched) $ambiguous = true;   // jangan menebak — biar admin putuskan
             }
 
-            // Fuzzy prefix (PD-aware) — hanya bila belum cocok & belum ambigu.
-            if (! $matched && ! $ambiguous && strlen($normalized) >= 20) {
+            // Fuzzy (PD-aware) — hanya bila nama tidak ada persis & tidak ambigu.
+            // Kandidat berawalan sama baru diterima bila namanya memang sama (skor ≥ 0,90).
+            if (! $matched && ! $ambigPool && ! $otherKeg && strlen($normalized) >= 20) {
                 $prefix = substr($normalized, 0, 25);
                 $fuzzy  = $allSk->filter(fn ($sk) =>
                     $pdMatch($skPd($sk), $rowPd) && (
@@ -1541,8 +1676,22 @@ class OppkpkeController extends Controller
                         str_contains($prefix, substr($this->normalizeSkName($sk->nama_sub_kegiatan), 0, 25))
                     )
                 )->values();
-                if ($fuzzy->count() === 1) $matched = $fuzzy->first();
-                elseif ($fuzzy->count() > 1) $ambiguous = true;
+
+                $rowKey = $pdNorm($raw['sub_kegiatan']);
+                $scored = $fuzzy->map(fn ($sk) => ['sk' => $sk, 'score' => $nameScore($rowKey, $pdNorm($sk->nama_sub_kegiatan))])
+                    ->sortByDesc('score')->values();
+                $strong = $scored->filter(fn ($s) => $s['score'] >= 0.90)->values();
+
+                if ($strong->count() === 1 || ($strong->count() > 1 && $strong[0]['score'] - $strong[1]['score'] >= 0.03)) {
+                    $matched = $strong[0]['sk'];
+                } elseif ($strong->count() > 1) {
+                    $ambigPool = $strong->pluck('sk');
+                    $ambigKind = 'fuzzy';
+                } elseif ($scored->isNotEmpty()) {
+                    // Hanya mirip awalan → dianggap sub kegiatan berbeda (Data Baru); tampilkan sebagai info.
+                    $raw['match_note'] = 'Mirip awalan dengan "' . $scored[0]['sk']->nama_sub_kegiatan . '" ('
+                        . (int) round($scored[0]['score'] * 100) . '%), tetapi namanya berbeda — diperlakukan sebagai sub kegiatan baru.';
+                }
             }
 
             if ($matched) {
@@ -1552,8 +1701,8 @@ class OppkpkeController extends Controller
                 continue;
             }
 
-            if ($ambiguous) {
-                $push($raw, $rowNum, 'ambiguous', null, null);
+            if ($ambigPool) {
+                $push(array_merge($raw, $describeAmbig($ambigPool, $raw, $ambigKind)), $rowNum, 'ambiguous', null, null);
                 continue;
             }
 
@@ -1576,6 +1725,18 @@ class OppkpkeController extends Controller
             $raw['strategi_warn'] = ! $stratObj && $needsNewProgram($rowPd, (string) ($raw['program'] ?? ''), $kode);
             $push($raw, $rowNum, 'not_found', null, null);
         }
+
+        // Tandai kandidat ambigu yang sudah dipakai baris lain (alokasinya nanti dijumlahkan).
+        $claimed = [];
+        foreach ($result as $r) {
+            if ($r['status'] === 'matched' && $r['sub_kegiatan_id']) $claimed[$r['sub_kegiatan_id']] ??= $r['row_num'];
+        }
+        foreach ($result as &$r) {
+            if ($r['status'] !== 'ambiguous') continue;
+            foreach ($r['ambig_candidates'] as &$c) $c['claimed_by'] = $claimed[$c['id']] ?? null;
+            unset($c);
+        }
+        unset($r);
 
         return $result;
     }
@@ -1600,6 +1761,11 @@ class OppkpkeController extends Controller
 
     private function normalizeSkName(string $name): string
     {
+        // Spasi non-standar dari Excel (NBSP dsb.) → spasi biasa; tanpa ini
+        // "Nelayan Kecil\u{00A0}" dianggap berbeda dari "Nelayan Kecil".
+        $name = preg_replace('/[\x{00A0}\x{1680}\x{2000}-\x{200B}\x{202F}\x{205F}\x{3000}\x{FEFF}]/u', ' ', $name) ?? $name;
+        // Awalan penanda daftar ("- Fasilitasi ...") bukan bagian nama.
+        $name = preg_replace('/^[\s\-\x{2013}\x{2014}\x{2022}*]+/u', '', $name) ?? $name;
         $name = strtolower(trim($name));
         $name = str_replace(['/', '\\', '(', ')', '"', "'", ','], [' ', ' ', ' ', ' ', '', '', ''], $name);
         return trim(preg_replace('/\s+/', ' ', $name));

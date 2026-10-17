@@ -270,16 +270,29 @@ class OppkpkeService
     public function executeImport(array $cached, array $skip, bool $replaceYear, int $userId): array
     {
         return DB::transaction(function () use ($cached, $skip, $replaceYear, $userId) {
-            $imported  = 0;
-            $updated   = 0;
-            $skipped   = 0;
-            $createdSk = 0;
-            $deleted   = 0;
+            $imported      = 0;
+            $updated       = 0;
+            $skipped       = 0;
+            $createdSk     = 0;
+            $deleted       = 0;
+            $skippedAmbig  = 0;
+            $resolvedAmbig = 0;
+            $merged        = 0;
+            $outsidePlan   = 0;      // mode realisasi: SK belum punya data tahun ini (di luar RAT)
+            $totalRealisasi = 0.0;
+            $batch         = [];     // sub_kegiatan_id => [alokasi, sem1, sem2, total] yang sudah ditulis batch ini
 
-            if ($replaceYear) {
+            // "realisasi": hanya Realisasi Sem.1/Sem.2/Total yang ditulis; alokasi & data
+            // perencanaan (hasil import RAT) tidak disentuh. "lengkap": perilaku lama.
+            $realisasiOnly = ($cached['mode'] ?? 'lengkap') === 'realisasi';
+            $realisasiFile = (float) collect($cached['rows'])->where('status', '!=', 'duplicate')
+                ->sum(fn ($r) => max((float) ($r['realisasi_total'] ?? 0), (float) ($r['realisasi_sem1'] ?? 0) + (float) ($r['realisasi_sem2'] ?? 0)));
+
+            if ($replaceYear && ! $realisasiOnly) {
                 $importSkIds = collect($cached['rows'])
-                    ->filter(fn($r) => in_array($r['status'], ['matched', 'new_sk']) && !in_array((string) $r['row_num'], $skip))
-                    ->pluck('sub_kegiatan_id')
+                    ->filter(fn($r) => ! in_array((string) $r['row_num'], $skip)
+                        && (in_array($r['status'], ['matched', 'new_sk']) || ($r['status'] === 'ambiguous' && is_int($r['resolved_to'] ?? null))))
+                    ->map(fn ($r) => $r['status'] === 'ambiguous' ? $r['resolved_to'] : $r['sub_kegiatan_id'])
                     ->filter()
                     ->unique()
                     ->values()
@@ -297,6 +310,13 @@ class OppkpkeService
                 if (in_array((string) $row['row_num'], $skip)) { $skipped++; continue; }
 
                 $skId = $row['sub_kegiatan_id'];
+
+                // Baris ambigu hanya diproses bila admin memilih tujuannya di preview.
+                if ($row['status'] === 'ambiguous') {
+                    if (! is_int($row['resolved_to'] ?? null)) { $skippedAmbig++; continue; }
+                    $skId = $row['resolved_to'];
+                    $resolvedAmbig++;
+                }
 
                 if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
                     $newSk = SubKegiatan::firstOrCreate(
@@ -316,14 +336,33 @@ class OppkpkeService
                 $sem2 = (float) ($row['realisasi_sem2'] ?? 0);
                 $tot  = (float) ($row['realisasi_total'] ?? 0);
                 $realisasiTotal = max($tot, $sem1 + $sem2);
-                if ($realisasiTotal <= 0 && ($sem1 + $sem2) > 0) $realisasiTotal = $sem1 + $sem2;
+                $alok = (float) ($row['alokasi_anggaran'] ?? 0);
+                $totalRealisasi += $realisasiTotal;
+
+                // SK yang sama sudah diisi baris lain di batch ini (mis. baris ambigu yang
+                // dipilih ke SK baris lain) → jumlahkan, jangan timpa.
+                if (isset($batch[$skId]) && $exists) {
+                    $b = &$batch[$skId];
+                    [$b[0], $b[1], $b[2], $b[3]] = [$b[0] + $alok, $b[1] + $sem1, $b[2] + $sem2, $b[3] + $realisasiTotal];
+                    $exists->update(array_merge(
+                        ['realisasi_sem1' => $b[1], 'realisasi_sem2' => $b[2], 'realisasi_total' => $b[3], 'updated_by' => $userId],
+                        $realisasiOnly ? [] : ['alokasi_anggaran' => $b[0]]
+                    ));
+                    unset($b);
+                    $merged++;
+                    continue;
+                }
+                $batch[$skId] = [$alok, $sem1, $sem2, $realisasiTotal];
 
                 $payload = [
                     'semester'                 => $cached['semester'],
-                    'alokasi_anggaran'         => (float) ($row['alokasi_anggaran'] ?? 0),
                     'realisasi_sem1'           => $sem1,
                     'realisasi_sem2'           => $sem2,
                     'realisasi_total'          => $realisasiTotal,
+                    'updated_by'               => $userId,
+                ];
+                $planning = [
+                    'alokasi_anggaran'         => $alok,
                     'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
                     'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
                     'lokasi'                   => $row['lokasi'] ?: null,
@@ -334,27 +373,41 @@ class OppkpkeService
                     'aktivitas_langsung'       => $row['aktivitas_langsung'] ?: null,
                     'aktivitas_tidak_langsung' => $row['aktivitas_tidak_langsung'] ?: null,
                     'aktivitas_penunjang'      => $row['aktivitas_penunjang'] ?: null,
-                    'updated_by'               => $userId,
                 ];
 
                 if ($exists) {
-                    $exists->update($payload);
+                    $exists->update($realisasiOnly ? $payload : array_merge($payload, $planning));
                     $updated++;
                 } else {
-                    $payload['sub_kegiatan_id'] = $skId;
-                    $payload['tahun']           = $cached['tahun'];
-                    $payload['created_by']      = $userId;
-                    LaporanOppkpke::create($payload);
+                    // Mode realisasi: SK belum punya data tahun ini (tidak ada di RAT) → tetap
+                    // dicatat agar realisasi lengkap, dengan alokasi 0 (alokasi hanya dari RAT).
+                    if ($realisasiOnly) {
+                        $planning['alokasi_anggaran'] = 0;
+                        $outsidePlan++;
+                    }
+                    LaporanOppkpke::create(array_merge($payload, $planning, [
+                        'sub_kegiatan_id' => $skId,
+                        'tahun'           => $cached['tahun'],
+                        'created_by'      => $userId,
+                    ]));
                     $imported++;
                 }
             }
 
             return [
-                'imported'   => $imported,
-                'updated'    => $updated,
-                'skipped'    => $skipped,
-                'created_sk' => $createdSk,
-                'deleted'    => $deleted,
+                'mode'            => $realisasiOnly ? 'realisasi' : 'lengkap',
+                'imported'        => $imported,
+                'updated'         => $updated,
+                'skipped'         => $skipped,
+                'created_sk'      => $createdSk,
+                'deleted'         => $deleted,
+                'skipped_ambig'   => $skippedAmbig,
+                'resolved_ambig'  => $resolvedAmbig,
+                'merged'          => $merged,
+                'outside_plan'    => $outsidePlan,
+                'total_realisasi' => $totalRealisasi,
+                'realisasi_file'  => $realisasiFile,
+                'selisih'         => round(max(0, $realisasiFile - $totalRealisasi), 2),
             ];
         });
     }
@@ -370,8 +423,14 @@ class OppkpkeService
             $createdPd      = 0;
             $skippedDup     = 0;
             $skippedAmbig   = 0;
+            $resolvedAmbig  = 0;
+            $merged         = 0;
             $totalAlokasi   = 0.0;   // total alokasi yang benar-benar diproses (import + update)
             $processedSkIds = [];
+            $batchAlok      = [];    // sub_kegiatan_id => alokasi yang sudah ditulis batch ini
+            // Total file = semua baris non-duplikat (alokasi duplikat sudah digabung ke baris pertamanya).
+            $totalFile = (float) collect($cached['rows'])->where('status', '!=', 'duplicate')
+                ->sum(fn ($r) => (float) ($r['alokasi_anggaran'] ?? 0));
             // Cache in-memory PD/Program/Kegiatan yang sudah di-resolve dalam batch ini
             // → banyak sub kegiatan dari 1 operator/program tidak query & buat berulang
             // (bukan "insert 1-1"); entitas yang sama dipakai ulang.
@@ -382,10 +441,20 @@ class OppkpkeService
 
                 if (in_array($rowNumStr, $skip)) { $skipped++; continue; }
                 if ($row['status'] === 'duplicate') { $skippedDup++; continue; }
-                // Baris ambigu TIDAK diproses (sistem tak menebak) — admin memperbaiki file.
-                if ($row['status'] === 'ambiguous') { $skippedAmbig++; continue; }
 
                 $skId = $row['sub_kegiatan_id'];
+
+                // Baris ambigu hanya diproses bila admin memilih tujuannya di preview
+                // (sistem tidak menebak). Tanpa pilihan → dilewati.
+                if ($row['status'] === 'ambiguous') {
+                    $target = $row['resolved_to'] ?? null;
+                    if ($target === null) { $skippedAmbig++; continue; }
+                    $skId = $target === 'new'
+                        ? $this->forceCreateSkFromRow($row, $userId, $createdHier, $createdPd, $hierCache)
+                        : (int) $target;
+                    if (!$skId) { $skipped++; continue; }
+                    $resolvedAmbig++;
+                }
 
                 if ($row['status'] === 'new_sk' && !empty($row['kegiatan_id'])) {
                     $newSk = SubKegiatan::firstOrCreate(
@@ -417,8 +486,22 @@ class OppkpkeService
                 $exists = LaporanOppkpke::where('sub_kegiatan_id', $skId)
                     ->where('tahun', $cached['tahun'])->first();
 
+                $alok = (float) $row['alokasi_anggaran'];
+
+                // Sub kegiatan ini sudah diisi baris lain di batch yang sama (mis. baris ambigu
+                // yang dipilih ke SK yang juga cocok dengan baris lain, atau dua baris "Data Baru"
+                // bernama sama) → jumlahkan alokasinya seperti baris duplikat, jangan ditimpa.
+                if (isset($batchAlok[$skId]) && $exists) {
+                    $batchAlok[$skId] += $alok;
+                    $exists->update(['alokasi_anggaran' => $batchAlok[$skId], 'updated_by' => $userId]);
+                    $merged++;
+                    $totalAlokasi += $alok;
+                    continue;
+                }
+                $batchAlok[$skId] = $alok;
+
                 $payload = [
-                    'alokasi_anggaran'         => $row['alokasi_anggaran'],
+                    'alokasi_anggaran'         => $alok,
                     'sumber_pembiayaan'        => $row['sumber_pembiayaan'] ?: 'APBD',
                     'sifat_bantuan'            => $row['sifat_bantuan'] ?: null,
                     'lokasi'                   => $row['lokasi'] ?: null,
@@ -447,7 +530,7 @@ class OppkpkeService
                     $imported++;
                 }
 
-                $totalAlokasi += (float) $row['alokasi_anggaran'];
+                $totalAlokasi += $alok;
             }
 
             $deleted = 0;
@@ -465,9 +548,13 @@ class OppkpkeService
                 'created_hier'  => $createdHier,
                 'created_pd'    => $createdPd,
                 'skipped_dup'   => $skippedDup,
-                'skipped_ambig' => $skippedAmbig,
-                'total_alokasi' => $totalAlokasi,
-                'deleted'       => $deleted,
+                'skipped_ambig'  => $skippedAmbig,
+                'resolved_ambig' => $resolvedAmbig,
+                'merged'         => $merged,
+                'total_alokasi'  => $totalAlokasi,
+                'total_file'     => $totalFile,
+                'selisih'        => round(max(0, $totalFile - $totalAlokasi), 2),
+                'deleted'        => $deleted,
             ];
         });
     }

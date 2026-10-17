@@ -43,35 +43,49 @@
                 var msg    = document.getElementById('importStatusMessage');
 
                 if (data.state === 'done') {
-                    var totalSkip = (data.skipped || 0);
-                    var perfect   = totalSkip === 0;
+                    var totalSkip  = (data.skipped || 0);
+                    var unresolved = (data.skipped_ambig || 0);
+                    var gap        = (data.selisih || 0);
+                    var perfect    = totalSkip === 0 && unresolved === 0 && gap < 1;
                     var rp = function(n){ return 'Rp ' + Math.round(n || 0).toLocaleString('id-ID'); };
+                    // Kelas ditulis utuh (bukan disambung) agar terdeteksi Tailwind saat build.
+                    var tone = perfect
+                        ? { box: ['bg-green-50', 'border-green-300'], icon: ['fa-circle-check', 'text-green-500'], title: 'text-green-800', msg: 'text-green-700', note: 'text-green-600' }
+                        : { box: ['bg-amber-50', 'border-amber-300'], icon: ['fa-circle-exclamation', 'text-amber-500'], title: 'text-amber-800', msg: 'text-amber-700', note: 'text-amber-600' };
 
                     banner.classList.remove('bg-blue-50', 'border-blue-300');
-                    banner.classList.add('bg-green-50', 'border-green-300');
+                    banner.classList.add(tone.box[0], tone.box[1]);
                     icon.classList.remove('fa-circle-notch', 'fa-spin', 'text-blue-500');
-                    icon.classList.add('fa-circle-check', 'text-green-500');
-                    title.className = 'font-semibold text-green-800 text-sm';
+                    icon.classList.add(tone.icon[0], tone.icon[1]);
+                    title.className = 'font-semibold text-sm ' + tone.title;
                     title.textContent = perfect
                         ? 'Import Matriks RAT Selesai — Tersinkronisasi Sempurna ✓'
-                        : 'Import Matriks RAT Selesai — Tersinkronisasi ✓';
-                    msg.className = 'text-green-700 text-sm mt-0.5';
+                        : 'Import Matriks RAT Selesai — Belum Tersinkron Penuh';
+                    msg.className = 'text-sm mt-0.5 ' + tone.msg;
 
                     var rincian = (data.updated || 0) + ' diperbarui, ' + (data.imported || 0) + ' baru'
                         + ((data.created_sk || 0) > 0 ? ', ' + data.created_sk + ' sub kegiatan baru' : '')
                         + ((data.created_hier || 0) > 0 ? ', ' + data.created_hier + ' entri hierarki baru' : '')
                         + ((data.created_pd || 0) > 0 ? ', ' + data.created_pd + ' perangkat daerah baru' : '')
+                        + ((data.resolved_ambig || 0) > 0 ? ', ' + data.resolved_ambig + ' ambigu diselesaikan manual' : '')
+                        + ((data.merged || 0) > 0 ? ', ' + data.merged + ' baris dijumlahkan ke sub kegiatan yang sama' : '')
                         + ((data.deleted || 0) > 0 ? ', ' + data.deleted + ' data lama dihapus (sinkronisasi penuh)' : '')
-                        + ((data.skipped_ambig || 0) > 0 ? ', ' + data.skipped_ambig + ' ambigu dilewati' : '')
+                        + (unresolved > 0 ? ', ' + unresolved + ' ambigu dilewati' : '')
                         + ', ' + totalSkip + ' dilewati.';
 
                     msg.innerHTML =
                         '<div>' + rincian + '</div>'
-                        + '<div class="mt-1 font-semibold text-green-800">Total alokasi tersinkronisasi: ' + rp(data.total_alokasi) + '</div>'
-                        + '<div class="mt-0.5 text-xs ' + (perfect ? 'text-green-600' : 'text-amber-600') + '">'
+                        + '<div class="mt-1 font-semibold ' + tone.title + '">Total alokasi tersinkronisasi: ' + rp(data.total_alokasi)
+                        + (data.total_file ? ' dari ' + rp(data.total_file) + ' (total file)' : '') + '</div>'
+                        + '<div class="mt-0.5 text-xs ' + tone.note + '">'
                         + (perfect
-                            ? '<i class="fas fa-circle-check mr-1"></i>Semua baris yang dicentang dieksekusi & tersinkronisasi dengan benar — tidak ada yang terlewat.'
-                            : '<i class="fas fa-circle-info mr-1"></i>' + totalSkip + ' baris tidak dicentang/dilewati. Baris "Dilewati" (strategi tak dikenali) & "Ambigu" memang tidak bisa diimpor otomatis — lihat kolom Strategi & badge di preview, perbaiki di file atau via menu Kelola Strategi, lalu upload ulang.')
+                            ? '<i class="fas fa-circle-check mr-1"></i>Seluruh nominal file sudah masuk — tidak ada baris yang terlewat.'
+                            : '<i class="fas fa-circle-info mr-1"></i>'
+                                + (gap >= 1 ? 'Selisih <strong>' + rp(gap) + '</strong> belum masuk. ' : '')
+                                + 'Berasal dari ' + (unresolved > 0 ? unresolved + ' baris Ambigu yang belum dipilih tujuannya' : '')
+                                + (unresolved > 0 && totalSkip > 0 ? ' dan ' : '')
+                                + (totalSkip > 0 ? totalSkip + ' baris tidak dicentang/dilewati' : '')
+                                + '. Upload ulang file, lalu di preview pilih sub kegiatan tujuan untuk baris Ambigu.')
                         + '</div>';
                 } else {
                     banner.classList.remove('bg-blue-50', 'border-blue-300');
@@ -282,7 +296,7 @@
     <div class="bg-white rounded-xl border border-yellow-300 p-3 shadow-sm">
         <p class="text-xs text-yellow-700 font-medium">Ambigu</p>
         <p class="text-2xl font-bold text-yellow-600">{{ $stats['ambiguous'] }}</p>
-        <p class="text-[10px] text-yellow-500">perlu diperbaiki — dilewati</p>
+        <p class="text-[10px] text-yellow-600">Rp {{ number_format($stats['ambiguous_alokasi'] ?? 0, 0, ',', '.') }} — pilih tujuan</p>
     </div>
     @endif
     @if(($stats['strategi_warn'] ?? 0) > 0)
@@ -338,10 +352,16 @@
 <div class="flex items-start gap-3 bg-yellow-50 border border-yellow-300 rounded-xl p-3 mb-4 text-sm">
     <i class="fas fa-circle-question text-yellow-500 mt-0.5 flex-shrink-0"></i>
     <div>
-        <p class="font-semibold text-yellow-800">{{ $stats['ambiguous'] }} baris ambigu — TIDAK diimport (sistem tidak menebak)</p>
+        <p class="font-semibold text-yellow-800">{{ $stats['ambiguous'] }} baris ambigu — Rp {{ number_format($stats['ambiguous_alokasi'] ?? 0, 0, ',', '.') }} belum ikut tersinkron</p>
         <p class="text-yellow-700 text-xs mt-0.5">
-            Baris bertanda <span class="bg-yellow-100 text-yellow-800 rounded px-1.5 py-0.5 font-semibold">Ambigu</span> memiliki beberapa Sub Kegiatan bernama sama di perangkat daerah yang sama. Untuk keakuratan, baris ini <strong>dilewati</strong>. Tambahkan <strong>Kode</strong> yang membedakan atau perjelas nama Sub Kegiatan di file, lalu upload ulang.
+            <strong>Kenapa ambigu?</strong> Di perangkat daerah yang sama ada <strong>lebih dari satu sub kegiatan bernama sama</strong> (mis. "Pembangunan Ruang Kelas Baru" di kegiatan SD, SMP, dan PAUD), dan file tidak memberi pembeda yang cocok dengan database — misalnya kolom Kegiatan di file kosong dan kode sub kegiatan di database belum terisi. Sistem tidak menebak; alasan rinci tampil di tiap baris.
         </p>
+        <p class="text-yellow-700 text-xs mt-1">
+            <strong>Agar nominal tersinkron penuh:</strong> pilih sub kegiatan tujuan di kolom <em>Sub Kegiatan (DB)</em>, atau "Buat sebagai sub kegiatan baru". Pilihan pada satu baris otomatis diterapkan ke baris ambigu lain yang kode kegiatannya sama. Setelah diimport, kode dari file disimpan ke sub kegiatan tersebut sehingga import berikutnya langsung cocok otomatis.
+        </p>
+        <button type="button" onclick="ratSetFilter('ambiguous')" class="mt-1.5 text-xs font-semibold text-yellow-800 underline hover:text-yellow-900">
+            <i class="fas fa-filter text-[10px] mr-0.5"></i> Tampilkan baris ambigu saja
+        </button>
     </div>
 </div>
 @endif
@@ -439,7 +459,9 @@
                 };
                 $rowSearch = strtolower(trim(($row['sub_kegiatan'] ?? '') . ' ' . ($row['matched_pd_nama'] ?? $row['perangkat_daerah'] ?? '')));
             @endphp
-            <tr data-status="{{ $status }}" data-search="{{ $rowSearch }}" style="background:{{ $bg }};" class="rat-row hover:opacity-90 transition-colors">
+            <tr data-status="{{ $status }}" data-search="{{ $rowSearch }}"
+                data-alokasi="{{ $isDuplicate ? 0 : (float) $row['alokasi_anggaran'] }}"
+                style="background:{{ $bg }};" class="rat-row hover:opacity-90 transition-colors">
                 {{-- Checkbox --}}
                 <td class="border border-gray-200 px-2 py-2 text-center">
                     @if($canImport)
@@ -466,8 +488,8 @@
                             <i class="fas fa-copy text-[9px]"></i> Duplikat
                         </span>
                     @elseif($isAmbiguous)
-                        <span class="inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Ada beberapa sub kegiatan bernama sama di PD ini — sistem tidak menebak. Perbaiki kode/nama di file.">
-                            <i class="fas fa-circle-question text-[9px]"></i> Ambigu
+                        <span class="ambig-badge inline-flex items-center gap-1 bg-yellow-100 text-yellow-800 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Ada beberapa sub kegiatan bernama sama di PD ini — pilih tujuannya di kolom Sub Kegiatan (DB).">
+                            <i class="fas fa-circle-question text-[9px]"></i> <span class="ambig-badge-text">Ambigu</span>
                         </span>
                     @elseif($strategiWarn)
                         <span class="inline-flex items-center gap-1 bg-red-100 text-red-700 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap" title="Strategi tak dikenali & program harus dibuat baru — dilewati.">
@@ -505,8 +527,11 @@
                         <p class="text-[10px] text-blue-500 font-mono mb-0.5" title="Kode Sub Kegiatan">{{ $row['kode_sub'] }}</p>
                     @endif
                     {{ $row['sub_kegiatan'] }}
-                    @if($isNotFound && !empty($row['kegiatan']))
+                    @if(($isNotFound || $isAmbiguous) && !empty($row['kegiatan']))
                         <p class="text-[10px] text-gray-400 mt-0.5">↳ {{ $row['kegiatan'] }}</p>
+                    @endif
+                    @if($isAmbiguous && !empty($row['kode_kegiatan']))
+                        <p class="text-[10px] text-gray-500 mt-0.5">Kode kegiatan (dari file): <span class="font-mono text-blue-600">{{ $row['kode_kegiatan'] }}</span></p>
                     @endif
                 </td>
                 <td class="border border-gray-200 px-2 py-2 leading-snug
@@ -518,7 +543,24 @@
                     @elseif($isDuplicate)
                         {{ $row['matched_sk_nama'] ?? '—' }}
                     @elseif($isAmbiguous)
-                        <span class="text-yellow-700 italic"><i class="fas fa-circle-question text-[9px] mr-0.5"></i> Beberapa sub bernama sama — tak diimport (perbaiki kode/nama di file)</span>
+                        <div class="min-w-[300px] max-w-[400px]">
+                            <p class="text-yellow-800 font-semibold"><i class="fas fa-circle-question text-[9px] mr-0.5"></i> Kenapa ambigu?</p>
+                            <ul class="list-disc pl-4 mt-0.5 space-y-0.5 text-[10px] text-yellow-700">
+                                @foreach($row['ambig_reasons'] ?? [] as $why)<li>{{ $why }}</li>@endforeach
+                            </ul>
+                            <label class="block text-[10px] font-semibold text-gray-600 mt-1.5 mb-0.5">Import ke sub kegiatan:</label>
+                            <select class="ambig-select w-full border border-yellow-400 rounded px-1.5 py-1 text-[11px] text-gray-800 bg-white focus:ring-2 focus:ring-yellow-400"
+                                    data-row="{{ $row['row_num'] }}" data-kodekeg="{{ $row['kode_kegiatan'] ?? '' }}" onchange="ratAmbigChange(this)">
+                                <option value="">— Lewati (tidak diimport) —</option>
+                                @foreach($row['ambig_candidates'] ?? [] as $cand)
+                                    <option value="{{ $cand['id'] }}" data-keg="{{ $cand['kegiatan_id'] }}" data-claimed="{{ $cand['claimed_by'] }}">
+                                        {{ ($row['ambig_kind'] ?? '') === 'fuzzy' ? $cand['nama'] . ' — ' : '' }}Kegiatan: {{ $cand['kegiatan'] ?: '—' }}{{ $cand['kegiatan_kode'] ? ' [' . $cand['kegiatan_kode'] . ']' : '' }}{{ $cand['kode'] ? ' · kode ' . $cand['kode'] : '' }}{{ $cand['alokasi_db'] !== null ? ' · RAT tersimpan Rp ' . number_format($cand['alokasi_db'], 0, ',', '.') : '' }}{{ $cand['claimed_by'] ? ' · dipakai baris #' . $cand['claimed_by'] : '' }}
+                                    </option>
+                                @endforeach
+                                <option value="new">➕ Buat sebagai sub kegiatan baru</option>
+                            </select>
+                            <p class="ambig-note hidden text-[10px] mt-0.5"></p>
+                        </div>
                     @elseif($strategiWarn)
                         <span class="text-red-500 italic"><i class="fas fa-triangle-exclamation text-[9px] mr-0.5"></i> Dilewati — strategi tak dikenali</span>
                     @elseif($isNotFound)
@@ -526,13 +568,16 @@
                     @else
                         {{ $row['matched_sk_nama'] ?? '—' }}
                     @endif
+                    @if(!empty($row['match_note']) && ($isNewSk || $isNotFound))
+                        <p class="text-[10px] text-gray-500 font-normal mt-0.5"><i class="fas fa-circle-info text-[9px] mr-0.5"></i>{{ $row['match_note'] }}</p>
+                    @endif
                 </td>
                 {{-- Aktivitas --}}
                 <td class="border border-gray-200 px-2 py-2 text-gray-600 leading-snug">{{ $row['aktivitas_langsung'] ?: '—' }}</td>
                 <td class="border border-gray-200 px-2 py-2 text-gray-600 leading-snug">{{ $row['aktivitas_tidak_langsung'] ?: '—' }}</td>
                 <td class="border border-gray-200 px-2 py-2 text-gray-600 leading-snug">{{ $row['aktivitas_penunjang'] ?: '—' }}</td>
                 {{-- Alokasi --}}
-                <td class="border border-gray-200 px-2 py-2 text-right font-mono {{ $isMatched ? 'text-green-800 font-semibold' : 'text-gray-400' }} whitespace-nowrap">
+                <td class="border border-gray-200 px-2 py-2 text-right font-mono {{ $isMatched ? 'text-green-800 font-semibold' : ($isAmbiguous ? 'text-yellow-700 font-semibold' : 'text-gray-400') }} whitespace-nowrap">
                     {{ $row['alokasi_anggaran'] > 0 ? number_format($row['alokasi_anggaran'], 0, ',', '.') : '—' }}
                 </td>
                 {{-- Detail cols --}}
@@ -556,6 +601,28 @@
             </tr>
             </tbody>
         </table>
+    </div>
+</div>
+
+{{-- Ringkasan sinkronisasi nominal (dihitung ulang setiap centang / pilihan ambigu berubah) --}}
+<div class="bg-white rounded-xl border shadow-sm p-4 mb-4">
+    <div class="flex flex-wrap items-end gap-x-8 gap-y-2">
+        <div>
+            <p class="text-xs text-gray-500">Total Alokasi File</p>
+            <p class="font-bold text-gray-800 font-mono" id="rat-sum-total">Rp {{ number_format($ratTotalAlokasi, 0, ',', '.') }}</p>
+        </div>
+        <div>
+            <p class="text-xs text-gray-500">Akan Tersinkron</p>
+            <p class="font-bold text-green-700 font-mono" id="rat-sum-selected">—</p>
+        </div>
+        <div>
+            <p class="text-xs text-gray-500">Selisih (tidak ikut diimport)</p>
+            <p class="font-bold font-mono" id="rat-sum-gap">—</p>
+        </div>
+        <div class="flex-1 min-w-[220px]">
+            <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div id="rat-sum-bar" class="h-full bg-green-600 transition-all" style="width:0%"></div></div>
+            <p class="text-[11px] text-gray-500 mt-1" id="rat-sum-note"></p>
+        </div>
     </div>
 </div>
 
@@ -709,11 +776,99 @@ document.addEventListener('DOMContentLoaded', () => {
 
 });
 
+function ratResolvedSelects() {
+    return Array.prototype.filter.call(document.querySelectorAll('.ambig-select'), function (s) { return s.value !== ''; });
+}
+
 function updateImportCount() {
-    const count = document.querySelectorAll('.row-check:checked').length;
+    const count = document.querySelectorAll('.row-check:checked').length + ratResolvedSelects().length;
     const badge = document.getElementById('import-count');
     if (badge) badge.textContent = count;
+    ratRecalc();
 }
+
+// ── Ringkasan nominal: berapa dari total file yang akan masuk ────
+function ratRupiah(n) { return 'Rp ' + Math.round(n || 0).toLocaleString('id-ID'); }
+function ratRecalc() {
+    var total = 0, selected = 0, ambigOpen = 0, otherOut = 0;
+    document.querySelectorAll('tr.rat-row').forEach(function (tr) {
+        if (tr.getAttribute('data-status') === 'duplicate') return; // sudah digabung ke baris pertamanya
+        var a  = parseFloat(tr.getAttribute('data-alokasi') || '0') || 0;
+        var cb = tr.querySelector('.row-check');
+        var rs = tr.querySelector('.ambig-select');
+        total += a;
+        if ((cb && cb.checked) || (rs && rs.value !== '')) { selected += a; }
+        else if (rs) { ambigOpen++; }
+        else { otherOut++; }
+    });
+    var gap = Math.max(0, total - selected);
+    var pct = total > 0 ? Math.min(100, selected / total * 100) : 100;
+    var el = function (id) { return document.getElementById(id); };
+    if (!el('rat-sum-selected')) return;
+    el('rat-sum-selected').textContent = ratRupiah(selected);
+    el('rat-sum-gap').textContent = ratRupiah(gap);
+    el('rat-sum-gap').className = 'font-bold font-mono ' + (gap >= 1 ? 'text-amber-600' : 'text-green-700');
+    el('rat-sum-bar').style.width = pct.toFixed(2) + '%';
+    el('rat-sum-bar').className = 'h-full transition-all ' + (gap >= 1 ? 'bg-amber-500' : 'bg-green-600');
+    el('rat-sum-note').innerHTML = gap < 1
+        ? '<i class="fas fa-circle-check text-green-600 mr-1"></i>Seluruh nominal file akan tersinkron (100%).'
+        : pct.toFixed(2).replace('.', ',') + '% tersinkron — belum ikut: '
+            + [ambigOpen ? ambigOpen + ' baris ambigu belum dipilih tujuannya' : '',
+               otherOut ? otherOut + ' baris tidak dicentang / dilewati' : ''].filter(Boolean).join(', ') + '.';
+}
+
+// ── Baris ambigu: pilih tujuan, sebarkan ke baris berkode kegiatan sama ──
+function ratAmbigChange(sel, auto) {
+    if (!auto) delete sel.dataset.autoFrom;
+    // Pilihan admin pada satu baris diterapkan ke baris ambigu lain yang kode kegiatannya
+    // sama & masih kosong — hanya bila di baris itu tepat satu kandidat berada di kegiatan yang sama.
+    if (!auto && /^\d+$/.test(sel.value) && sel.dataset.kodekeg) {
+        var keg = sel.options[sel.selectedIndex].dataset.keg;
+        document.querySelectorAll('.ambig-select').forEach(function (o) {
+            if (o === sel || o.value !== '' || o.dataset.kodekeg !== sel.dataset.kodekeg) return;
+            var same = Array.prototype.filter.call(o.options, function (op) { return op.dataset.keg === keg; });
+            if (same.length === 1) { o.value = same[0].value; o.dataset.autoFrom = sel.dataset.row; }
+        });
+    }
+    ratAmbigRefresh();
+    updateImportCount();
+}
+
+function ratAmbigRefresh() {
+    var selects = document.querySelectorAll('.ambig-select');
+    var usedBy = {};
+    selects.forEach(function (s) {
+        if (/^\d+$/.test(s.value)) (usedBy[s.value] = usedBy[s.value] || []).push(s.dataset.row);
+    });
+    selects.forEach(function (s) {
+        var tr    = s.closest('tr');
+        var badge = tr.querySelector('.ambig-badge');
+        var text  = tr.querySelector('.ambig-badge-text');
+        var note  = tr.querySelector('.ambig-note');
+        var chosen = s.value !== '';
+        if (badge) {
+            badge.classList.toggle('bg-yellow-100', !chosen);
+            badge.classList.toggle('text-yellow-800', !chosen);
+            badge.classList.toggle('bg-green-100', chosen);
+            badge.classList.toggle('text-green-700', chosen);
+        }
+        if (text) text.textContent = chosen ? 'Dipilih ✓' : 'Ambigu';
+
+        var msgs = [];
+        if (s.dataset.autoFrom) msgs.push('Otomatis mengikuti pilihan baris #' + s.dataset.autoFrom + ' (kode kegiatan sama) — periksa kembali.');
+        if (/^\d+$/.test(s.value)) {
+            var others = (usedBy[s.value] || []).filter(function (r) { return r !== s.dataset.row; });
+            var claimed = s.options[s.selectedIndex].dataset.claimed;
+            if (claimed) others.unshift(claimed);
+            if (others.length) msgs.push('⚠ Sub kegiatan ini juga dipakai baris #' + others.join(', #') + ' — alokasinya akan dijumlahkan.');
+        }
+        if (s.value === 'new') msgs.push('Sub kegiatan baru dibuat di bawah program/kegiatan sesuai file.');
+        var warn = msgs.join('').indexOf('⚠') !== -1;
+        note.innerHTML = msgs.join('<br>');
+        note.className = 'ambig-note text-[10px] mt-0.5 ' + (warn ? 'text-amber-600' : 'text-gray-500') + (msgs.length ? '' : ' hidden');
+    });
+}
+document.addEventListener('DOMContentLoaded', ratRecalc);
 
 // ── Sinkronisasi Penuh toggle ─────────────────────────────────────
 var ratSyncActive = false;
@@ -748,11 +903,22 @@ function ratToggleSync() {
 
 // ── Confirm import ────────────────────────────────────────────────
 function confirmImport(form) {
-    const count = document.querySelectorAll('.row-check:checked').length;
+    const resolved = ratResolvedSelects();
+    const count = document.querySelectorAll('.row-check:checked').length + resolved.length;
     if (count === 0) {
         alert('Tidak ada baris yang dipilih. Centang minimal satu baris.');
         return false;
     }
+
+    // Kirim pilihan tujuan baris ambigu (divalidasi ulang di server terhadap kandidatnya).
+    form.querySelectorAll('input[name^="resolve["]').forEach(el => el.remove());
+    resolved.forEach(s => {
+        const hidden = document.createElement('input');
+        hidden.type  = 'hidden';
+        hidden.name  = 'resolve[' + s.dataset.row + ']';
+        hidden.value = s.value;
+        form.appendChild(hidden);
+    });
 
     // Build skip list: rows that are NOT checked
     document.querySelectorAll('.row-check').forEach(cb => {
@@ -768,12 +934,16 @@ function confirmImport(form) {
     const syncMsg = ratSyncActive
         ? '\n\n⚠️ SINKRONISASI PENUH aktif — record lama tahun {{ $tahun ?? "" }} yang tidak ada di file ini akan DIHAPUS permanen.'
         : '';
+    const gapEl  = document.getElementById('rat-sum-gap');
+    const gapMsg = gapEl && gapEl.classList.contains('text-amber-600')
+        ? `\n\n⚠️ Nominal belum tersinkron penuh — selisih ${gapEl.textContent} tidak ikut diimport.`
+        : '';
 
     return confirm(
         `Anda akan mengimport ${count} baris data Matriks RAT untuk Tahun {{ $tahun ?? '' }}.\n\n` +
         `Data Alokasi Anggaran & perencanaan akan diperbarui.\n` +
         `Data Realisasi yang sudah ada TIDAK akan diubah.` +
-        syncMsg + `\n\nLanjutkan?`
+        gapMsg + syncMsg + `\n\nLanjutkan?`
     );
 }
 
