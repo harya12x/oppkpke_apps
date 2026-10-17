@@ -1,38 +1,83 @@
-# Git
+# =============================================================================
+# .dockerignore — RPKD Kotabaru (OPPKPKE)
+# Prinsip: image hanya berisi kode + aset statis. Secret dan data runtime
+# (storage/, database) tidak pernah masuk image; dipasang saat runtime.
+# =============================================================================
+
+# --- Git dan alat bantu -------------------------------------------------------
 .git
 .gitignore
+.gitattributes
 .github
+.hadolint.yaml
+.gitleaksignore
+.gitleaks.toml
+.editorconfig
+.claude
+.codex
+.cursor
+.idea
+.vscode
+.zed
+.nova
+docker
+!docker/php
+docker-compose*.yml
+docker-compose*.example
+compose*.yaml
+**/Dockerfile*
+.dockerignore
 
-# Environment
+# --- Secret -------------------------------------------------------------------
 .env
 .env.*
 !.env.example
+**/.token
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
 
-# Dependencies (akan di-install ulang di dalam container)
-node_modules
+# --- Dependensi (dipasang ulang di dalam build) -------------------------------
 vendor
+node_modules
+**/node_modules
+public/build
+public/hot
+public/storage
+public/fonts-manifest.dev.json
 
-# Laravel generated
-/public/hot
-/public/storage
-/storage/*.key
-*.log
+# --- Data runtime -------------------------------------------------------------
+storage/app/*
+!storage/app/.gitignore
+!storage/app/private
+!storage/app/public
+storage/app/private/*
+!storage/app/private/.gitignore
+storage/app/public/*
+!storage/app/public/.gitignore
+storage/logs/*
+!storage/logs/.gitignore
+storage/framework/sessions/*
+storage/framework/cache/data/*
+storage/framework/views/*
+storage/framework/testing/*
+storage/*.key
+storage/pail
+bootstrap/cache/*.php
+database/*.sqlite*
 
-# Docker files (tidak perlu di dalam image)
-docker
-docker-compose.yml
-docker-compose.*.yml
-
-# Docs
-README.md
-CHANGELOG.md
-
-# IDE
-.idea
-.vscode
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
+# --- Skrip SQL, dokumentasi, test, alat server lama ---------------------------
+**/*.sql
+**/*.sql.gz
+**/*.dump
+*.zip
+docs
+deploy
+tools
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache
+*.md

@@ -1,0 +1,11 @@
+# hadolint untuk docker/php/Dockerfile (dipakai CI).
+failure-threshold: warning
+ignored:
+  # Versi paket apt tidak dipin: image dasar dipin per versi Debian, dan pin
+  # versi apt patah setiap ada rilis keamanan Debian.
+  - DL3008
+  # Pipa di RUN disengaja: pola resmi image PHP (ldd | awk | xargs).
+  - DL4006
+  # FROM ${PHP_IMAGE} dsb.: tag image dasar dipin lewat nilai default ARG.
+  # hadolint 2.12 tidak membaca default ARG, jadi aturan ini salah alarm.
+  - DL3006

@@ -1,0 +1,77 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-admin-pertama <email> ["Nama Tampilan"] [--dengan-data-master]
+#
+# Database RPKD di vps1 dimulai KOSONG. Skrip ini membuat akun Admin Master
+# pertama dengan password acak. Password TIDAK dicetak ke layar: ditulis ke
+# /root/rpkd/admin-pertama-<waktu>.txt (root, 0600). Baca sekali, simpan di
+# password manager, hapus filenya (shred -u), lalu ganti password setelah login.
+#
+#   --dengan-data-master  isi juga data referensi (3 strategi, perangkat daerah,
+#                         program, kegiatan, sub kegiatan) dari
+#                         Database\Seeders\OppkpkeMasterDataSeeder. TANPA laporan.
+#
+# JANGAN pakai "php artisan db:seed" biasa di produksi: DatabaseSeeder memanggil
+# UserSeeder (6 akun dengan password umum "password123") dan
+# OppkpkeLaporan2025Seeder (laporan contoh).
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+EMAIL="${1:?Pemakaian: rpkd-admin-pertama <email> [\"Nama\"] [--dengan-data-master]}"
+NAMA="Administrator Master"; MASTER=0
+shift
+for a in "$@"; do
+    case "$a" in
+        --dengan-data-master) MASTER=1 ;;
+        --*) echo "Opsi tidak dikenal: $a" >&2; exit 2 ;;
+        *) NAMA="$a" ;;
+    esac
+done
+[[ "$EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "Email tidak valid." >&2; exit 2; }
+
+ACTIVE_CONF=/srv/rpkd/nginx/active.conf
+w="$(sed -nE 's/.*default[[:space:]]+(blue|green)[[:space:]]*;.*/\1/p' "$ACTIVE_CONF" | head -1)"
+C="rpkd-app-${w:-green}-1"
+[ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" = true ] || { echo "$C tidak jalan." >&2; exit 1; }
+
+if [ "$MASTER" = 1 ]; then
+    # Seeder merujuk id program/kegiatan dengan ANGKA tetap (1, 2, ...): hanya benar
+    # di tabel yang masih kosong.
+    # shellcheck disable=SC2016  # $(cat ...) dievaluasi sh di dalam container
+    isi="$(docker exec rpkd-mysql-1 sh -c 'MYSQL_PWD="$(cat /run/secrets/mysql_root)" exec mysql -uroot -N rpkd -e \
+        "SELECT (SELECT COUNT(*) FROM perangkat_daerah) + (SELECT COUNT(*) FROM programs) + (SELECT COUNT(*) FROM kegiatan)"')"
+    [ "$isi" = 0 ] || { echo "Data referensi sudah berisi ($isi baris); --dengan-data-master hanya untuk database kosong." >&2; exit 1; }
+    echo "Mengisi data referensi (OppkpkeMasterDataSeeder) ..."
+    docker exec -e HOME=/tmp "$C" php artisan db:seed --class='Database\Seeders\OppkpkeMasterDataSeeder' --force --no-interaction
+fi
+
+D=/root/rpkd; install -d -m 0700 "$D"
+OUT="$D/admin-pertama-$(date +%Y%m%d-%H%M%S).txt"
+# shellcheck disable=SC2016  # kode PHP, bukan variabel shell
+( umask 077
+  docker exec -e HOME=/tmp -e RPKD_ADMIN_EMAIL="$EMAIL" -e RPKD_ADMIN_NAMA="$NAMA" -w /var/www/html "$C" php -r '
+    require "vendor/autoload.php";
+    $app = require "bootstrap/app.php";
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $email = getenv("RPKD_ADMIN_EMAIL");
+    if (App\Models\User::where("email", $email)->exists()) {
+        fwrite(STDERR, "Akun dengan email itu sudah ada; tidak ada yang diubah.\n");
+        exit(3);
+    }
+    $pw = Illuminate\Support\Str::password(20, symbols: false);
+    $u = new App\Models\User();
+    $u->forceFill([
+        "name" => getenv("RPKD_ADMIN_NAMA"),
+        "email" => $email,
+        "password" => Illuminate\Support\Facades\Hash::make($pw),
+        "role" => "master",
+        "perangkat_daerah_id" => null,
+        "is_active" => true,
+    ])->save();
+    echo "Login  : ", $email, "\nPassword: ", $pw, "\n";
+  ' > "$OUT" ) || { rc=$?; rm -f "$OUT"; exit "$rc"; }
+chmod 0600 "$OUT"
+echo "Akun Admin Master dibuat untuk $EMAIL."
+echo "Password ada di $OUT (root, 0600; tidak dicetak di sini)."
+echo "  Baca: sudo cat $OUT   lalu simpan di password manager dan:  sudo shred -u $OUT"
+echo "  Setelah login pertama, ganti password lewat menu Ganti Password."

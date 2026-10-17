@@ -1,8 +1,8 @@
 *.log
 .DS_Store
 .env
-.env.backup
-.env.production
+.env.*
+!.env.example
 .phpactor.json
 .phpunit.result.cache
 /.codex
@@ -25,3 +25,12 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Hanya ada di server — JANGAN commit (kredensial / data / spesifik server)
+/docker-compose.override.yml
+/*.sql
+/backuprw.zip
+
+# CI vps1: gitleaks yang diunduh tools/rahasia.php, info rilis dari CI
+/tools/.bin/
+/.rilis/

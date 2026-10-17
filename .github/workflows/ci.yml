@@ -1,0 +1,457 @@
+# =============================================================================
+# CI RPKD Kotabaru (OPPKPKE) — diperiksa setiap push dan pull request.
+#
+#   rahasia  gitleaks atas seluruh riwayat Git, per rahasia (tools/rahasia.php)
+#   periksa  sintaks PHP, verifikasi TLS tidak dimatikan, hadolint, shellcheck,
+#            docker compose config
+#   uji      composer install, cek huruf besar/kecil kelas, route:cache, PHPUnit
+#            (Unit + Feature) terhadap MySQL 8.4
+#   migrasi  php artisan migrate dari database KOSONG (cara vps1 memulai), diulang
+#            (harus "nothing to migrate"), lalu data master
+#   image    build rpkd-php, cek isi image, uji asap (read-only, tanpa root),
+#            Trivy, lalu (hanya push ke main) terbitkan ke ghcr.io tag sha-<commit>
+#   rilis    (hanya push ke main, setelah SEMUA job di atas hijau) beri tag
+#            rilis-<commit> dan rilis. Hanya tag ini yang diambil vps1-cd.
+#
+# Deploy ke server BUKAN di sini: vps1 menarik tag "rilis" sendiri (vps1-cd),
+# meminta persetujuan lewat Telegram, lalu rpkd-deploy (dump + migrate +
+# blue/green). Workflow lama deploy.yml (SSH ke server lama) sudah dihapus.
+#
+# Semua action dipin ke commit SHA (sama dengan repo SIA).
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Mingguan (Senin 03:00 WIB): build ulang + pindai kerentanan image terbaru.
+  schedule:
+    - cron: "0 20 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  HADOLINT_IMAGE: hadolint/hadolint:v2.12.0
+  SHELLCHECK_IMAGE: koalaman/shellcheck:v0.10.0
+  TRIVY_IMAGE: aquasec/trivy:0.58.1
+  PHP_CLI_IMAGE: php:8.3-cli
+  IMAGE_NAMA: rpkd-php
+
+jobs:
+  # ---------------------------------------------------------------------------
+  rahasia:
+    name: Kredensial di riwayat Git
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # tools/rahasia.php: gitleaks (versi terkunci, checksum diverifikasi) atas
+      # seluruh riwayat, dikelompokkan PER RAHASIA. Nilai tidak pernah tampil di log.
+      # Temuan yang sudah dirotasi dicatat di .gitleaksignore lewat:
+      #   php tools/rahasia.php tandai <no> --sudah-dirotasi
+      - name: gitleaks
+        env:
+          DASAR_PR: ${{ github.event.pull_request.base.sha }}
+          DASAR_PUSH: ${{ github.event.before }}
+        run: |
+          dasar=""
+          if [ -n "$DASAR_PR" ]; then dasar="$(git merge-base "$DASAR_PR" HEAD)"
+          elif [ -n "$DASAR_PUSH" ] && git cat-file -e "$DASAR_PUSH^{commit}" 2>/dev/null; then dasar="$DASAR_PUSH"; fi
+          php tools/rahasia.php pindai --ci ${dasar:+--dasar "$dasar"}
+
+  # ---------------------------------------------------------------------------
+  periksa:
+    name: Sintaks dan konfigurasi
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sintaks PHP
+        run: |
+          docker run --rm -v "$PWD:/app:ro" -w /app "$PHP_CLI_IMAGE" sh -c \
+            'find app bootstrap config database routes tests tools -name "*.php" -print0 \
+               | xargs -0 -n1 -P4 php -l > /tmp/lint.txt 2>&1; rc=$?; grep -v "^No syntax errors" /tmp/lint.txt || true; exit $rc'
+
+      - name: Verifikasi TLS tidak dimatikan
+        run: |
+          if grep -rnE "withoutVerifying\(|'verify'[[:space:]]*=>[[:space:]]*false|CURLOPT_SSL_VERIFY(PEER|HOST)[[:space:]]*(,|=>)[[:space:]]*(false|0)|verify_peer'[[:space:]]*=>[[:space:]]*false" \
+               app config routes bootstrap; then
+            echo "::error::verifikasi sertifikat TLS dimatikan di baris di atas"; exit 1
+          fi
+          echo "OK: tidak ada koneksi yang mematikan verifikasi TLS."
+
+      # Seeder akun contoh (password umum) tidak boleh dipanggil dari kode aplikasi.
+      - name: UserSeeder tidak dipanggil dari aplikasi
+        run: |
+          if grep -rn "UserSeeder" app routes config bootstrap; then
+            echo "::error::UserSeeder (akun contoh, password123) dirujuk dari kode produksi"; exit 1
+          fi
+
+      - name: hadolint
+        run: |
+          docker run --rm -i -v "$PWD/.hadolint.yaml:/cfg.yaml:ro" "$HADOLINT_IMAGE" \
+            hadolint --config /cfg.yaml - < docker/php/Dockerfile
+
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
+            docker/php/entrypoint.sh docker/php/healthcheck.sh docker/mysql/init/01-akun.sh docker/host/*
+
+      - name: docker compose config
+        run: |
+          printf 'RPKD_TAG=ci\nRPKD_TAG_BLUE=ci\nRPKD_TAG_GREEN=ci\nRPKD_TAG_MIGRASI=ci\n' > "$RUNNER_TEMP/compose.env"
+          docker compose --project-directory docker -f docker/compose.yaml --env-file "$RUNNER_TEMP/compose.env" \
+            --profile blue --profile green --profile jadwal --profile migrasi config --quiet
+
+  # ---------------------------------------------------------------------------
+  uji:
+    name: PHPUnit (MySQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci
+          MYSQL_DATABASE: rpkd_uji
+        ports: ["127.0.0.1:3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      APP_ENV: testing
+      # Mengalahkan <env> di phpunit.xml (sqlite): migration memakai sintaks MySQL.
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: rpkd_uji
+      DB_USERNAME: root
+      DB_PASSWORD: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: mbstring, pdo_mysql, gd, zip, intl, bcmath, exif, pcntl
+          coverage: none
+          tools: composer:v2
+
+      - name: Lokasi cache Composer
+        id: composer
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: .env CI
+        run: |
+          {
+            echo "APP_ENV=testing"
+            echo "APP_KEY=base64:$(openssl rand -base64 32)"
+            echo "APP_URL=http://localhost"
+          } > .env
+
+      - name: composer install
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Huruf besar/kecil nama kelas (Windows vs Linux)
+        run: php .github/scripts/cek-huruf-kelas.php app routes config database tests resources/views
+
+      - name: Nama route ganda
+        run: |
+          if php artisan route:cache --no-ansi > /tmp/rc.txt 2>&1; then
+            echo "route:cache berhasil."
+          else
+            echo "::warning title=Nama route ganda::$(grep -m1 -oE 'Another route has already been assigned name \[[^]]+\]' /tmp/rc.txt || tail -1 /tmp/rc.txt)"
+            cat /tmp/rc.txt
+          fi
+          php artisan route:clear --no-ansi > /dev/null
+
+      # @vite di view butuh public/build/manifest.json.
+      - name: Aset Vite
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --colors=always
+
+  # ---------------------------------------------------------------------------
+  migrasi:
+    name: Migrasi dari database kosong
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci
+          MYSQL_DATABASE: rpkd
+        ports: ["127.0.0.1:3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: mbstring, pdo_mysql, gd, zip, intl, bcmath, exif, pcntl
+          coverage: none
+          tools: composer:v2
+
+      - name: composer install
+        run: |
+          {
+            echo "APP_ENV=production"
+            echo "APP_KEY=base64:$(openssl rand -base64 32)"
+            echo "DB_CONNECTION=mysql"
+            echo "DB_HOST=127.0.0.1"
+            echo "DB_DATABASE=rpkd"
+            echo "DB_USERNAME=root"
+            echo "DB_PASSWORD=ci"
+          } > .env
+          composer install --no-interaction --no-progress --prefer-dist --no-dev
+
+      - name: migrate (pertama, database kosong)
+        run: php artisan migrate --force --no-interaction
+
+      - name: migrate (kedua, harus tidak ada yang dijalankan)
+        run: |
+          out="$(php artisan migrate --force --no-interaction 2>&1)"; echo "$out"
+          grep -qi 'nothing to migrate' <<<"$out" || { echo "::error::migrate kedua masih menjalankan migration"; exit 1; }
+          if php artisan migrate:status --no-ansi | grep -i pending; then
+            echo "::error::masih ada migration Pending"; exit 1
+          fi
+
+      - name: Data master (rpkd-admin-pertama --dengan-data-master)
+        run: |
+          php artisan db:seed --class='Database\Seeders\OppkpkeMasterDataSeeder' --force --no-interaction
+          mysql -h 127.0.0.1 -uroot -pci -N rpkd -e \
+            "SELECT 'strategi', COUNT(*) FROM strategi_oppkpke UNION ALL SELECT 'perangkat_daerah', COUNT(*) FROM perangkat_daerah
+             UNION ALL SELECT 'programs', COUNT(*) FROM programs UNION ALL SELECT 'kegiatan', COUNT(*) FROM kegiatan
+             UNION ALL SELECT 'sub_kegiatan', COUNT(*) FROM sub_kegiatan"
+
+  # ---------------------------------------------------------------------------
+  image:
+    name: Image rpkd-php
+    needs: [periksa]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+
+      - name: Nama image
+        id: nama
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "lokal=${IMAGE_NAMA}:ci"
+            echo "ghcr=ghcr.io/${owner}/${IMAGE_NAMA}:sha-${GITHUB_SHA}"
+            echo "waktu=$(git log -1 --format=%cI)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Riwayat commit di dalam image: vps1-cd menampilkan commit baru sejak versi
+      # yang terpasang di pesan persetujuan Telegram.
+      - name: Info rilis
+        run: |
+          mkdir -p .rilis
+          git log -n 40 --format='%H %cI %s' > .rilis/commit.txt
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/php/Dockerfile
+          load: true
+          push: false
+          provenance: false
+          tags: |
+            ${{ steps.nama.outputs.lokal }}
+            ${{ steps.nama.outputs.ghcr }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.nama.outputs.waktu }}
+          cache-from: type=gha,scope=rpkd-php
+          cache-to: type=gha,mode=max,scope=rpkd-php
+
+      - name: Image tidak membawa rahasia atau data
+        run: |
+          img="${{ steps.nama.outputs.lokal }}"
+          if docker history --no-trunc --format '{{.CreatedBy}}' "$img" \
+               | grep -Eq '(PASSWORD|TOKEN|SECRET|APP_KEY)=[^ "$]+'; then
+            echo "::error::metadata layer memuat nilai rahasia"; exit 1
+          fi
+          temuan="$(docker run --rm --network none --entrypoint sh "$img" -c '
+            cd /var/www/html
+            find . \( -path ./vendor -o -path ./node_modules \) -prune -o -type f \( \
+                 -name .env -o \( -name ".env.*" ! -name .env.example \) -o -name .token \
+                 -o -name "*.sql" -o -name "*.sqlite" -o -name "*.pem" -o -name "*.key" \) -print
+            ls storage/logs 2>/dev/null | grep -v "^\.gitignore$" | sed "s#^#storage/logs/#"
+            [ -e public/hot ] && echo public/hot
+            true')"
+          if [ -n "$temuan" ]; then
+            echo "::error::image memuat file yang tidak boleh ikut"
+            echo "$temuan" | sed 's#[^/]*$#<berkas>#' | sort | uniq -c
+            exit 1
+          fi
+          echo "Image bersih."
+
+      - name: Uji asap rpkd-php
+        run: |
+          img="${{ steps.nama.outputs.lokal }}"
+          {
+            echo "APP_ENV=production"
+            echo "APP_DEBUG=false"
+            echo "APP_KEY=base64:$(openssl rand -base64 32)"
+            echo "APP_URL=https://rpkdkabkotabaru.id"
+            echo "DB_CONNECTION=mysql"
+            echo "DB_HOST=127.0.0.1"
+            echo "DB_DATABASE=rpkd_ci"
+            echo "DB_USERNAME=ci"
+            echo "DB_PASSWORD=ci"
+            echo "SESSION_DRIVER=file"
+            echo "CACHE_STORE=file"
+            echo "QUEUE_CONNECTION=sync"
+          } > "$RUNNER_TEMP/ci.env"
+          chmod 0644 "$RUNNER_TEMP/ci.env"
+          opsi=(--read-only --cap-drop ALL --security-opt no-new-privileges
+                --tmpfs "/tmp:uid=33,gid=33"
+                --tmpfs "/var/www/html/storage:uid=33,gid=33"
+                --tmpfs "/var/www/html/bootstrap/cache:uid=33,gid=33"
+                -v "$RUNNER_TEMP/ci.env:/var/www/html/.env:ro")
+          echo "== php-fpm sehat (entrypoint penuh: config/event/view/route cache)"
+          docker run -d --name php "${opsi[@]}" "$img"
+          for i in $(seq 1 60); do
+            s="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' php)"
+            case "$s" in "running healthy") echo "sehat setelah $((i * 2)) detik"; break ;;
+                         "running unhealthy"|exited*|dead*) echo "::error::php: $s"; docker logs --tail 80 php; exit 1 ;; esac
+            sleep 2
+          done
+          [ "$s" = "running healthy" ] || { echo "::error::php tidak sehat: $s"; docker logs --tail 80 php; exit 1; }
+          echo "== GET /up lewat php-fpm"
+          docker exec php sh -c 'SCRIPT_FILENAME=/var/www/html/public/index.php SCRIPT_NAME=/index.php \
+            REQUEST_URI=/up QUERY_STRING= REQUEST_METHOD=GET SERVER_NAME=rpkdkabkotabaru.id SERVER_PORT=443 \
+            SERVER_PROTOCOL=HTTP/1.1 HTTP_HOST=rpkdkabkotabaru.id HTTP_USER_AGENT=ci REMOTE_ADDR=127.0.0.1 HTTPS=on \
+            cgi-fcgi -bind -connect 127.0.0.1:9000' > /tmp/up.txt 2>&1 || true
+          if grep -qiE '^Status: (4|5)' /tmp/up.txt || ! grep -qi 'application up' /tmp/up.txt; then
+            echo "::error::GET /up tidak sehat"; head -c 2000 /tmp/up.txt; docker logs --tail 50 php; exit 1
+          fi
+          echo "/up OK"
+          echo "== aset Vite ada di image"
+          docker exec php test -f public/build/manifest.json
+          if docker logs php 2>&1 | grep -E 'route:cache gagal'; then
+            echo "::warning::route:cache gagal di production (nama route ganda)"
+          fi
+
+      - name: Pindai kerentanan (Trivy)
+        env:
+          IMG: ${{ steps.nama.outputs.lokal }}
+          GAGAL_KALAU_KRITIS: ${{ github.event_name == 'schedule' && '1' || '0' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          trivy() {
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" "$TRIVY_IMAGE" "$@"
+          }
+          if ! trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress \
+                 --format table --exit-code 0 "$IMG" > "$RUNNER_TEMP/trivy.txt"; then
+            echo "::warning::Trivy tidak bisa jalan (unduhan database kerentanan?); pemindaian dilewati"
+            exit 0
+          fi
+          {
+            echo "### Trivy: $IMG (HIGH/CRITICAL yang sudah ada perbaikannya)"
+            echo '```'
+            head -c 60000 "$RUNNER_TEMP/trivy.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          kritis="$(trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --no-progress \
+                      --skip-db-update --format json "$IMG" | jq '[.Results[]?.Vulnerabilities[]?] | length')"
+          echo "CRITICAL yang sudah ada perbaikannya: $kritis"
+          if [ "$kritis" != 0 ]; then
+            if [ "$GAGAL_KALAU_KRITIS" = 1 ]; then
+              echo "::error::$kritis kerentanan CRITICAL yang sudah ada perbaikannya di $IMG"
+              exit 1
+            fi
+            echo "::warning::$kritis kerentanan CRITICAL yang sudah ada perbaikannya di $IMG"
+          fi
+
+      - name: Login ghcr.io
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "${{ steps.nama.outputs.ghcr }}"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${{ steps.nama.outputs.ghcr }}")"
+          echo "### ${IMAGE_NAMA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  rilis:
+    name: Rilis
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [rahasia, periksa, uji, migrasi, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag rilis
+        run: |
+          img="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAMA}"
+          docker buildx imagetools create \
+            --tag "$img:rilis-$GITHUB_SHA" --tag "$img:rilis" "$img:sha-$GITHUB_SHA"
+          {
+            echo "### Siap rilis"
+            echo "\`$img:rilis-$GITHUB_SHA\`"
+            echo
+            echo "vps1-cd akan meminta persetujuan lewat Telegram; rpkd-deploy membuat dump database, menjalankan migrate, lalu blue/green."
+          } >> "$GITHUB_STEP_SUMMARY"

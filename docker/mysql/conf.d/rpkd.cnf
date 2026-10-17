@@ -1,0 +1,21 @@
+# =============================================================================
+# MySQL 8.4 LTS — RPKD Kotabaru / OPPKPKE (vps1)
+# =============================================================================
+[mysqld]
+character_set_server    = utf8mb4
+collation_server        = utf8mb4_unicode_ci   # sama dengan config/database.php
+
+# Data kecil (laporan per sub kegiatan per tahun). Batas memori container 2G.
+innodb_buffer_pool_size = 512M
+
+# Dua warna saat deploy (2 x pm.max_children 16) + worker + scheduler + admin.
+max_connections         = 120
+
+skip_name_resolve       = ON
+local_infile            = OFF
+secure_file_priv        = NULL
+mysqlx                  = OFF
+
+slow_query_log          = ON
+long_query_time         = 1
+log_error_verbosity     = 2

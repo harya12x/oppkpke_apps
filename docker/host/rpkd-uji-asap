@@ -1,0 +1,68 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-uji-asap <container> — uji asap aplikasi RPKD langsung ke php-fpm satu
+# container (tanpa lewat Nginx, jadi bisa menguji warna CADANGAN sebelum trafik
+# dipindah). Dipanggil rpkd-deploy (sebelum pindah trafik) dan vps1-cd (pemantauan
+# sesudah pindah). Keluar 0 kalau semua lolos.
+#
+#   1. Halaman tanpa login (daftar CEK di bawah): status HTTP dan isi yang diharapkan.
+#   2. Database: koneksi Laravel ke MySQL jalan, skema rpkd lengkap, tidak ada
+#      migration yang belum dijalankan (kode baru butuh skema yang sesuai).
+# =============================================================================
+set -euo pipefail
+C="${1:?Pemakaian: rpkd-uji-asap <nama container php-fpm>}"
+HOST=rpkdkabkotabaru.id
+
+# "<path> <status> <teks yang harus ada di isi>"  (teks "-" = tidak dicek)
+CEK=(
+    "/ 302 -"
+    "/login 200 loginForm"
+)
+MIN_TABEL=20   # migration membuat 23 tabel; di bawah ini = database salah/kosong
+
+[ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" = true ] || { echo "  uji asap: $C tidak jalan"; exit 1; }
+
+minta() {   # minta <path> -> header+isi respons dari php-fpm
+    docker exec "$C" env SCRIPT_FILENAME=/var/www/html/public/index.php SCRIPT_NAME=/index.php \
+        REQUEST_URI="$1" QUERY_STRING= REQUEST_METHOD=GET SERVER_NAME="$HOST" SERVER_PORT=443 \
+        SERVER_PROTOCOL=HTTP/1.1 HTTP_HOST="$HOST" HTTP_USER_AGENT=rpkd-uji-asap REMOTE_ADDR=127.0.0.1 HTTPS=on \
+        cgi-fcgi -bind -connect 127.0.0.1:9000 </dev/null 2>&1
+}
+
+gagal=0
+for baris in "${CEK[@]}"; do
+    read -r path harap teks <<<"$baris"
+    r="$(minta "$path" || true)"
+    # Tanpa header Status = 200 (php-fpm hanya mengirim Status untuk selain 200).
+    st="$(sed -n '1,/^\r\{0,1\}$/p' <<<"$r" | grep -im1 '^Status:' | grep -oE '[0-9]{3}' || echo 200)"
+    if [ "$st" != "$harap" ]; then
+        echo "  uji asap GAGAL: GET $path -> $st (harus $harap)"; gagal=1; continue
+    fi
+    if [ "$teks" != - ] && ! grep -qF "$teks" <<<"$r"; then
+        echo "  uji asap GAGAL: GET $path -> $st, tetapi isinya tidak memuat '$teks'"; gagal=1; continue
+    fi
+    echo "  uji asap OK  : GET $path -> $st"
+done
+
+# shellcheck disable=SC2016  # kode PHP, bukan variabel shell
+db="$(docker exec -w /var/www/html "$C" php -r '
+    require "vendor/autoload.php";
+    $app = require "bootstrap/app.php";
+    $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    $db = Illuminate\Support\Facades\DB::connection();
+    $n = $db->selectOne("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()")->n;
+    $m = $app->make("migrator");
+    $sudah = $m->getRepository()->getRan();
+    $belum = array_diff(array_keys($m->getMigrationFiles(database_path("migrations"))), $sudah);
+    echo "ok ", $db->getDatabaseName(), " ", $n, " ", count($belum), "\n";
+' 2>&1 | tail -1 || true)"
+if [[ "$db" =~ ^ok\ ([^ ]+)\ ([0-9]+)\ ([0-9]+)$ ]] && [ "${BASH_REMATCH[2]}" -ge "$MIN_TABEL" ]; then
+    if [ "${BASH_REMATCH[3]}" = 0 ]; then
+        echo "  uji asap OK  : database ${BASH_REMATCH[1]} (${BASH_REMATCH[2]} tabel, migration lengkap)"
+    else
+        echo "  uji asap GAGAL: ${BASH_REMATCH[3]} migration belum dijalankan (rpkd-migrasi)"; gagal=1
+    fi
+else
+    echo "  uji asap GAGAL: database: ${db:0:300}"; gagal=1
+fi
+exit "$gagal"

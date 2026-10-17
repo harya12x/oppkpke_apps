@@ -1,0 +1,116 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-env-siapkan — buat .env Laravel RPKD untuk Docker vps1 dari NOL (database
+# baru, tidak memakai .env server lama). Nilai rahasia tidak pernah tampil di
+# layar atau masuk Git.
+#
+#   rpkd-env-siapkan            tulis /srv/rpkd/secrets/rpkd.env dan rpkd-migrasi.env
+#   rpkd-env-siapkan --timpa    tulis ulang keduanya; APP_KEY dan MAIL_* dari
+#                               rpkd.env lama DIPERTAHANKAN (APP_KEY baru = semua
+#                               sesi login putus dan data terenkripsi tak terbaca)
+#
+#   rpkd.env          aplikasi, worker, scheduler: akun rpkd_app (DML)
+#   rpkd-migrasi.env  service "migrasi" (rpkd-migrasi): akun rpkd_migrasi (DDL)
+#
+# Email notifikasi chat: MAIL_MAILER=log (hanya ditulis ke log) sampai SMTP
+# diisi langsung di rpkd.env (nano), lalu rpkd-deploy ulang tag yang sama.
+# Hasil: root:33, mode 0640. Yang dicetak hanya NAMA kunci.
+# =============================================================================
+set -euo pipefail
+umask 077
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+TIMPA="${1:-}"
+case "$TIMPA" in ""|--timpa) ;; *) echo "Opsi tidak dikenal: $TIMPA" >&2; exit 2 ;; esac
+SECRETS=/srv/rpkd/secrets
+APP_ENVF="$SECRETS/rpkd.env"
+MIG_ENVF="$SECRETS/rpkd-migrasi.env"
+APP_URL="${RPKD_APP_URL:-https://rpkdkabkotabaru.id}"
+
+for f in "$APP_ENVF" "$MIG_ENVF"; do
+    if [ -e "$f" ] && [ "$TIMPA" != --timpa ]; then
+        echo "$f sudah ada. Tambahkan --timpa untuk menulis ulang (APP_KEY dipertahankan)." >&2
+        exit 1
+    fi
+done
+
+baca_secret() {
+    local f="$SECRETS/$1"
+    [ -s "$f" ] || { echo "Secret $f belum ada (jalankan vps1-rpkd-siapkan.sh)." >&2; exit 1; }
+    tr -d '\r\n' < "$f"
+}
+lama() { [ -f "$APP_ENVF" ] && grep -E "^$1=" "$APP_ENVF" | tail -1 | cut -d= -f2- || true; }
+
+APP_KEY="$(lama APP_KEY)"
+if [[ "$APP_KEY" =~ ^base64:[A-Za-z0-9+/]{43}=$ ]]; then
+    echo "  APP_KEY lama dipertahankan."
+else
+    APP_KEY="base64:$(openssl rand -base64 32)"
+    echo "  APP_KEY baru dibuat."
+fi
+
+# Nilai MAIL_* yang sudah diisi admin dipertahankan saat --timpa.
+# shellcheck disable=SC2016  # ${APP_NAME} diuraikan Laravel (dotenv), bukan shell
+declare -A MAIL=(
+    [MAIL_MAILER]=log
+    [MAIL_SCHEME]=null
+    [MAIL_HOST]=127.0.0.1
+    [MAIL_PORT]=587
+    [MAIL_USERNAME]=null
+    [MAIL_PASSWORD]=null
+    [MAIL_FROM_ADDRESS]='"noreply@rpkdkabkotabaru.id"'
+    [MAIL_FROM_NAME]='"${APP_NAME}"'
+)
+for k in "${!MAIL[@]}"; do
+    v="$(lama "$k")"; [ -z "$v" ] || MAIL[$k]="$v"
+done
+
+tulis() {   # tulis <tujuan> <isi>
+    local tmp; tmp="$(mktemp "$SECRETS/.rpkd.env.XXXXXX")"
+    printf '%s\n' "$2" > "$tmp"
+    chown root:33 "$tmp"; chmod 0640 "$tmp"; mv -f "$tmp" "$1"
+}
+
+UMUM="APP_NAME=\"OPPKPKE Kotabaru\"
+APP_ENV=production
+APP_KEY=$APP_KEY
+APP_DEBUG=false
+APP_URL=$APP_URL
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=id_ID
+APP_MAINTENANCE_DRIVER=file
+BCRYPT_ROUNDS=12
+LOG_CHANNEL=stack
+LOG_STACK=daily
+LOG_DAILY_DAYS=30
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=info
+DB_CONNECTION=mysql
+DB_DATABASE=rpkd"
+
+tulis "$APP_ENVF" "# rpkd.env untuk Docker vps1. Dibuat rpkd-env-siapkan $(date '+%F %T').
+# DB_HOST, DB_PORT, driver session/cache/queue diatur compose.yaml (mengalahkan file ini).
+$UMUM
+DB_USERNAME=rpkd_app
+DB_PASSWORD=$(baca_secret mysql_rpkd_app)
+SESSION_LIFETIME=120
+SESSION_ENCRYPT=false
+SESSION_PATH=/
+SESSION_DOMAIN=null
+SESSION_SECURE_COOKIE=true
+SESSION_SAME_SITE=lax
+BROADCAST_CONNECTION=log
+FILESYSTEM_DISK=local
+$(for k in MAIL_MAILER MAIL_SCHEME MAIL_HOST MAIL_PORT MAIL_USERNAME MAIL_PASSWORD MAIL_FROM_ADDRESS MAIL_FROM_NAME; do
+    printf '%s=%s\n' "$k" "${MAIL[$k]}"
+done)
+VITE_APP_NAME=\"\${APP_NAME}\""
+
+tulis "$MIG_ENVF" "# rpkd-migrasi.env: HANYA untuk php artisan migrate (rpkd-migrasi). Dibuat $(date '+%F %T').
+$UMUM
+DB_USERNAME=rpkd_migrasi
+DB_PASSWORD=$(baca_secret mysql_rpkd_migrasi)"
+
+echo "OK: $APP_ENVF dan $MIG_ENVF ditulis (root:33 0640)."
+[ "${MAIL[MAIL_MAILER]}" = log ] && echo "  Catatan: MAIL_MAILER=log (email notifikasi hanya ke log sampai SMTP diisi di $APP_ENVF)."
+exit 0

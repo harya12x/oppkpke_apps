@@ -1,0 +1,226 @@
+# =============================================================================
+# RPKD Kotabaru (OPPKPKE) — Docker Compose untuk vps1 (rpkdkabkotabaru.id)
+#
+# Dijalankan sebagai root dari folder ini, dengan file variabel yang ditulis
+# skrip deploy:
+#   docker compose --project-directory /opt/rpkd/src/docker \
+#     -f /opt/rpkd/src/docker/compose.yaml --env-file /srv/rpkd/deploy/compose.env up -d
+#
+# File ini di docker/, bukan di root repo: Docker Compose otomatis membaca ".env"
+# di folder project untuk interpolasi, dan di root repo itu adalah .env Laravel.
+# (docker-compose.yml di root repo adalah setup server LAMA; tidak dipakai di vps1.)
+#
+# Pintu masuk publik (Nginx, port 443) BUKAN bagian project ini: edge bersama
+# vps1 bergabung ke jaringan rpkd_edge dan memakai docker/nginx/rpkd.conf.
+#
+# Data di host (dibuat docker/host/vps1-rpkd-siapkan.sh):
+#   /srv/rpkd/secrets/   rpkd.env, rpkd-migrasi.env (Laravel), password MySQL, tls/
+#   /srv/rpkd/storage/   storage/ Laravel (bersama: app, worker, scheduler)
+#   /srv/rpkd/public/    aset publik per warna: blue/ dan green/ (dibaca edge)
+#   /srv/rpkd/mysql/     data MySQL
+#   /srv/rpkd/nginx/     active.conf (warna aktif) untuk edge
+#   /srv/rpkd/backup/    dump sebelum migrasi (rpkd-migrasi)
+# =============================================================================
+name: rpkd
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: local
+    options: {max-size: "20m", max-file: "5"}
+
+x-php-env: &php-env
+  # Nilai non-secret. Variabel environment container mengalahkan isi .env Laravel.
+  APP_ENV: production
+  APP_DEBUG: "false"
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  DB_DATABASE: rpkd
+  # Sesi, cache, dan antrean di database (docs/ARSITEKTUR.md): konsisten antar
+  # warna blue/green yang hidup bersamaan saat deploy.
+  SESSION_DRIVER: database
+  CACHE_STORE: database
+  QUEUE_CONNECTION: database
+  # Job import Excel: $timeout 300 s. Aturan: job.$timeout (300) < queue:work
+  # --timeout (310) < retry_after (330). Bawaan config/queue.php 90 s membuat job
+  # import yang lebih dari 90 s DIAMBIL ULANG worker lain (import ganda).
+  DB_QUEUE_RETRY_AFTER: "330"
+  VIEW_COMPILED_PATH: /tmp/views
+
+x-php: &php
+  <<: *hardening
+  environment: *php-env
+  volumes:
+    - /srv/rpkd/secrets/rpkd.env:/var/www/html/.env:ro
+    - /srv/rpkd/storage:/var/www/html/storage
+  tmpfs:
+    - /tmp:size=512m,mode=1777
+    - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0755
+
+x-worker: &worker
+  <<: *php
+  image: rpkd-php:${RPKD_TAG:?RPKD_TAG belum diisi}
+  # PID 1 = docker-init (tini): meneruskan sinyal stop ke php dan memungut proses yatim.
+  init: true
+  networks:
+    backend: {}
+    egress: {gw_priority: 1}
+  healthcheck: {disable: true}
+  depends_on:
+    mysql: {condition: service_healthy}
+
+services:
+  # ---------------------------------------------------------------------------
+  # Aplikasi web: dua warna. Hanya satu yang menerima trafik (lihat
+  # /srv/rpkd/nginx/active.conf). rpkd-deploy menyalakan warna cadangan dengan
+  # image baru, menunggu sehat, lalu memindah active.conf.
+  # ---------------------------------------------------------------------------
+  app-blue:
+    <<: *php
+    image: rpkd-php:${RPKD_TAG_BLUE:-none}
+    networks:
+      # Nama unik di jaringan edge: edge bersama juga tersambung ke jaringan
+      # PMB dan SIA, yang punya service app-blue sendiri.
+      edge: {aliases: [rpkd-app-blue]}
+      backend: {}
+      # Rute default lewat egress (br-rpkd-out): firewall host hanya mengizinkan
+      # keluar ke internet dari jaringan itu (SMTP notifikasi chat).
+      egress: {gw_priority: 1}
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 2G, pids: 512}
+    depends_on:
+      mysql: {condition: service_healthy}
+    profiles: [blue]
+
+  app-green:
+    <<: *php
+    image: rpkd-php:${RPKD_TAG_GREEN:-none}
+    networks:
+      edge: {aliases: [rpkd-app-green]}
+      backend: {}
+      egress: {gw_priority: 1}
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 2G, pids: 512}
+    depends_on:
+      mysql: {condition: service_healthy}
+    profiles: [green]
+
+  # ---------------------------------------------------------------------------
+  # Antrean (tabel jobs, queue "default"): import laporan/RAT dari Excel,
+  # notifikasi email chat. stop_grace_period > --timeout supaya import yang
+  # sedang berjalan selesai saat deploy.
+  # ---------------------------------------------------------------------------
+  worker:
+    <<: *worker
+    command: ["php", "artisan", "queue:work", "database", "--queue=default", "--tries=3", "--backoff=10,30,60",
+              "--timeout=310", "--memory=768", "--max-jobs=500", "--max-time=3600", "--sleep=3"]
+    stop_grace_period: 330s
+    profiles: [jadwal]
+    deploy:
+      replicas: 1
+      resources:
+        limits: {cpus: "1", memory: 1G}
+
+  # Tepat SATU scheduler (routes/console.php: announcements:deactivate-expired
+  # tiap 10 menit, audit:prune harian 02:00, queue:prune-failed mingguan).
+  scheduler:
+    <<: *worker
+    command: ["php", "artisan", "schedule:work"]
+    stop_grace_period: 70s
+    profiles: [jadwal]
+    deploy:
+      replicas: 1
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+
+  # ---------------------------------------------------------------------------
+  # Migrasi skema (php artisan migrate --force) dengan akun rpkd_migrasi (boleh
+  # DDL). Hanya dijalankan sekali pakai oleh rpkd-migrasi (dipanggil rpkd-deploy
+  # SEBELUM warna baru dinyalakan), setelah dump database. Aplikasi sendiri
+  # memakai rpkd_app yang hanya boleh DML.
+  # ---------------------------------------------------------------------------
+  migrasi:
+    <<: *php
+    image: rpkd-php:${RPKD_TAG_MIGRASI:-none}
+    restart: "no"
+    volumes:
+      - /srv/rpkd/secrets/rpkd-migrasi.env:/var/www/html/.env:ro
+      - /srv/rpkd/storage:/var/www/html/storage
+    environment:
+      <<: *php-env
+      RPKD_SKIP_CACHE: "1"
+    networks: [backend]
+    healthcheck: {disable: true}
+    depends_on:
+      mysql: {condition: service_healthy}
+    profiles: [migrasi]
+
+  # ---------------------------------------------------------------------------
+  # MySQL 8.4 LTS, terpisah dari MySQL PMB dan SIA. Tidak ikut di-restart saat
+  # deploy. Port 3308 hanya di 127.0.0.1 host (3306 PMB, 3307 SIA), untuk
+  # MySQL Workbench lewat SSH.
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    user: "999:999"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
+    networks: [backend, mgmt]
+    ports:
+      - "127.0.0.1:3308:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root
+      MYSQL_ROOT_HOST: localhost
+      MYSQL_DATABASE: rpkd
+    secrets: [mysql_root, mysql_rpkd_app, mysql_rpkd_migrasi, mysql_rpkd_backup]
+    volumes:
+      - /srv/rpkd/mysql:/var/lib/mysql
+      - ./mysql/conf.d:/etc/mysql/conf.d:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 2G, pids: 512}
+
+secrets:
+  mysql_root:         {file: /srv/rpkd/secrets/mysql_root}
+  mysql_rpkd_app:     {file: /srv/rpkd/secrets/mysql_rpkd_app}
+  mysql_rpkd_migrasi: {file: /srv/rpkd/secrets/mysql_rpkd_migrasi}
+  mysql_rpkd_backup:  {file: /srv/rpkd/secrets/mysql_rpkd_backup}
+
+# Nama bridge tetap supaya bisa dirujuk aturan nftables di host.
+# Subnet tetap supaya akun MySQL bisa dibatasi per subnet.
+# PMB 172.30.1-4.0/24, SIA 172.30.11-14.0/24, RPKD 172.30.21-24.0/24.
+networks:
+  edge:
+    driver: bridge
+    driver_opts: {com.docker.network.bridge.name: br-rpkd-edge}
+    ipam: {config: [{subnet: 172.30.21.0/24}]}
+  backend:
+    driver: bridge
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-rpkd-back}
+    ipam: {config: [{subnet: 172.30.22.0/24}]}
+  egress:
+    driver: bridge
+    driver_opts: {com.docker.network.bridge.name: br-rpkd-out}
+    ipam: {config: [{subnet: 172.30.23.0/24}]}
+  mgmt:
+    driver: bridge
+    driver_opts: {com.docker.network.bridge.name: br-rpkd-mgmt}
+    ipam: {config: [{subnet: 172.30.24.0/24}]}

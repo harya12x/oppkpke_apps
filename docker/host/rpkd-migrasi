@@ -1,0 +1,78 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-migrasi <tag 12> — cadangkan database RPKD lalu jalankan migration Laravel
+# dari image rpkd-php:<tag>, SEBELUM versi itu menerima trafik.
+#
+# Dipanggil rpkd-deploy (langkah 2b, PRA_DEPLOY). Bisa juga manual:
+#   rpkd-migrasi <tag>            dump + php artisan migrate --force
+#   rpkd-migrasi <tag> --status   hanya tampilkan php artisan migrate:status
+#
+#   1. Dump (mysqldump, akun rpkd_backup, --single-transaction) ke
+#      /srv/rpkd/backup/pra-migrasi-<waktu>-<tag>.sql.gz (root, 0600). 20 terakhir disimpan.
+#   2. php artisan migrate --force di container sekali pakai (service "migrasi",
+#      akun rpkd_migrasi yang boleh DDL; aplikasi sendiri hanya punya DML).
+#
+# Rollback kode (rpkd-deploy rollback) TIDAK membatalkan migration. Pemulihan
+# skema/data dari dump: lihat docs/DEPLOY-VPS1.md bagian "Pulihkan dari dump".
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+TAG="${1:?Pemakaian: rpkd-migrasi <tag 12 karakter> [--status]}"
+MODE="${2:-}"
+[[ "$TAG" =~ ^[0-9a-f]{12}$ ]] || { echo "Tag harus 12 karakter hex." >&2; exit 2; }
+case "$MODE" in ""|--status) ;; *) echo "Opsi tidak dikenal: $MODE" >&2; exit 2 ;; esac
+
+DOCKER_DIR=/opt/rpkd/src/docker
+ENVF=/srv/rpkd/deploy/compose.env
+BACKUP=/srv/rpkd/backup
+DB=rpkd
+MYSQL=rpkd-mysql-1
+SIMPAN=20
+
+dc() { docker compose --project-directory "$DOCKER_DIR" -f "$DOCKER_DIR/compose.yaml" --env-file "$ENVF" "$@"; }
+artisan() { RPKD_TAG_MIGRASI="$TAG" dc --profile migrasi run --rm --no-deps -T migrasi php artisan "$@" --no-interaction; }
+
+docker image inspect "rpkd-php:$TAG" >/dev/null 2>&1 || { echo "Image rpkd-php:$TAG tidak ada." >&2; exit 1; }
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$MYSQL" 2>/dev/null)" = healthy ] \
+    || { echo "$MYSQL tidak jalan/sehat." >&2; exit 1; }
+[ -s /srv/rpkd/secrets/rpkd-migrasi.env ] || { echo "/srv/rpkd/secrets/rpkd-migrasi.env belum ada (rpkd-env-siapkan)." >&2; exit 1; }
+
+if [ "$MODE" = --status ]; then
+    artisan migrate:status
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+echo "  Dump database $DB sebelum migrasi"
+# -----------------------------------------------------------------------------
+install -d -m 0700 "$BACKUP"
+tujuan="$BACKUP/pra-migrasi-$(date +%Y%m%d-%H%M%S)-$TAG.sql.gz"
+tmp="$tujuan.tmp"
+# shellcheck disable=SC2016  # $(cat ...) dievaluasi sh di dalam container
+if ! docker exec "$MYSQL" sh -c 'MYSQL_PWD="$(cat /run/secrets/mysql_rpkd_backup)" exec mysqldump \
+        -urpkd_backup --single-transaction --quick --no-tablespaces --routines --triggers --events \
+        --set-gtid-purged=OFF --default-character-set=utf8mb4 "$1"' sh "$DB" \
+     | gzip -6 > "$tmp"; then
+    rm -f "$tmp"; echo "  mysqldump GAGAL; migrasi tidak dijalankan." >&2; exit 1
+fi
+if ! gzip -t "$tmp" || ! zcat "$tmp" | tail -1 | grep -q 'Dump completed'; then
+    rm -f "$tmp"; echo "  Dump tidak lengkap; migrasi tidak dijalankan." >&2; exit 1
+fi
+chmod 0600 "$tmp"; mv "$tmp" "$tujuan"
+echo "  Dump: $tujuan ($(du -h "$tujuan" | cut -f1))"
+# Simpan $SIMPAN dump terakhir saja.
+# shellcheck disable=SC2012  # nama file buatan skrip ini sendiri (tanggal + tag hex)
+mapfile -t lama < <(ls -1t "$BACKUP"/pra-migrasi-*.sql.gz 2>/dev/null | tail -n +"$((SIMPAN + 1))")
+[ ${#lama[@]} -eq 0 ] || rm -f -- "${lama[@]}"
+
+# -----------------------------------------------------------------------------
+echo "  php artisan migrate --force (rpkd-php:$TAG, akun rpkd_migrasi)"
+# -----------------------------------------------------------------------------
+if ! artisan migrate --force 2>&1 | sed 's/^/    /'; then
+    echo "  migrate GAGAL. Kode lama tetap melayani. Dump sebelum migrasi: $tujuan" >&2
+    exit 1
+fi
+# Pengaman tambahan: tidak boleh ada migration yang tertinggal berstatus Pending.
+belum="$(artisan migrate:status 2>&1 | grep -ciE '\bpending\b' || true)"
+[ "$belum" = 0 ] || { echo "  Masih ada $belum migration berstatus Pending." >&2; exit 1; }
+echo "  Migrasi selesai."

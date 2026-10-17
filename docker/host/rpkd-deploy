@@ -1,0 +1,329 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-deploy — deploy blue/green RPKD Kotabaru (OPPKPKE) di vps1 (dipasang ke
+# /usr/local/sbin oleh vps1-rpkd-siapkan.sh).
+#
+#   rpkd-deploy <commit 40 | tag 12>   pasang versi baru di warna CADANGAN, cek sehat
+#                                     lewat edge, pindah trafik, perbarui worker/
+#                                     scheduler yang SEDANG jalan
+#   rpkd-deploy status                warna aktif, tag tiap warna, riwayat
+#   rpkd-deploy rollback [--ya]       trafik kembali ke warna sebelumnya (instan)
+#   rpkd-deploy matikan-cadangan      hentikan warna yang tidak aktif (hemat memori)
+#
+# Biasanya dipanggil vps1-cd (setelah persetujuan Telegram). Manual: tarik image
+# dulu dengan vps1-rpkd-tarik-image.sh. Sebelum warna baru dinyalakan, rpkd-migrasi
+# membuat dump database lalu menjalankan php artisan migrate (langkah 2b).
+# Versi baru harus sehat, /up lewat edge OK, dan lolos rpkd-uji-asap; kalau tidak,
+# trafik TIDAK dipindah. Perubahan skema tidak ikut dibatalkan oleh rollback:
+# migration harus tetap cocok dengan kode versi sebelumnya (expand/contract).
+# =============================================================================
+
+# ---- KONFIGURASI (satu-satunya bagian yang berbeda dengan pmb-/sia-deploy) ---
+APP=rpkd
+DOCKER_DIR=/opt/rpkd/src/docker
+ENVF=/srv/rpkd/deploy/compose.env
+DEPLOY_DIR=/srv/rpkd/deploy
+VAR=RPKD_TAG
+IMAGES=(rpkd-php)
+IMAGE_UTAMA=rpkd-php
+ACTIVE_CONF=/srv/rpkd/nginx/active.conf
+# shellcheck disable=SC2016
+MAP_VAR='$rpkd_color'
+PUBLIC_DIR=/srv/rpkd/public
+UP_PORT=8083
+UP_POLA='application up'
+LATAR=(worker scheduler)
+LATAR_PROFIL="--profile jadwal"
+TARIK_SKRIP=/opt/rpkd/src/docker/host/vps1-rpkd-tarik-image.sh
+UJI_ASAP=/usr/local/sbin/rpkd-uji-asap
+# Dipanggil "<skrip> <tag>" SEBELUM warna cadangan dinyalakan (langkah 2b). Kosong
+# di pmb/sia (skema mereka lewat SQL/vps1-cd MIGRASI). rpkd: dump database lalu
+# php artisan migrate --force dengan akun rpkd_migrasi.
+PRA_DEPLOY=/usr/local/sbin/rpkd-migrasi
+# ------------------------------------------------------------------------------
+
+# =============================================================================
+# BADAN SKRIP: sama dengan pmb-deploy dan sia-deploy, ditambah langkah 2b
+# (PRA_DEPLOY, dilewati kalau kosong) supaya bisa disalin balik ke keduanya.
+# Yang berbeda hanya blok KONFIGURASI di atas.
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+
+EDGE=edge-nginx-1
+RIWAYAT="$DEPLOY_DIR/riwayat.log"
+LOGDIR="/root/$APP-deploy"
+install -d -m 0700 "$LOGDIR"
+
+PERINTAH="${1:-}"
+case "$PERINTAH" in
+    status|rollback|matikan-cadangan) ;;
+    "") echo "Pakai: $APP-deploy <commit 40 karakter | tag 12 karakter> | status | rollback [--ya] | matikan-cadangan" >&2; exit 2 ;;
+    *) [[ "$PERINTAH" =~ ^[0-9a-f]{12}([0-9a-f]{28})?$ ]] \
+           || { echo "Argumen harus commit 40 karakter, tag 12 karakter, status, rollback, atau matikan-cadangan." >&2; exit 2; } ;;
+esac
+
+if [ "$PERINTAH" != status ] && [ -z "${DEPLOY_DI_TEE:-}" ]; then
+    DEPLOY_DI_TEE=1 bash "$0" "$@" 2>&1 | tee -a "$LOGDIR/$(date +%Y%m%d-%H%M%S)-$PERINTAH.txt"
+    exit "${PIPESTATUS[0]}"
+fi
+
+# Satu deploy dalam satu waktu per aplikasi.
+if [ "$PERINTAH" != status ]; then
+    exec 9>"/run/lock/$APP-deploy.lock"
+    flock -n 9 || { echo "Deploy $APP lain sedang berjalan." >&2; exit 1; }
+fi
+
+langkah() { printf '\n=== %s ===\n' "$*"; }
+gagal() { echo "GAGAL: $*" >&2; notify "Deploy $APP GAGAL: $*"; exit 1; }
+notify() { if [ -x /usr/local/sbin/vps1-notify ]; then /usr/local/sbin/vps1-notify "$1" >/dev/null 2>&1 || true; fi; }
+dc() { docker compose --project-directory "$DOCKER_DIR" -f "$DOCKER_DIR/compose.yaml" --env-file "$ENVF" "$@"; }
+env_baca() { awk -F= -v k="$1" '$1==k {v=$2} END {print v}' "$ENVF"; }
+env_tulis() {   # env_tulis KUNCI NILAI (ganti atau tambah satu baris)
+    local tmp; tmp="$(mktemp "$ENVF.XXXXXX")"
+    awk -F= -v k="$1" '$1!=k' "$ENVF" >"$tmp"
+    printf '%s=%s\n' "$1" "$2" >>"$tmp"
+    chmod --reference="$ENVF" "$tmp"; mv -f "$tmp" "$ENVF"
+}
+lain() { [ "$1" = blue ] && echo green || echo blue; }
+besar() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
+warna_aktif() { sed -nE 's/.*default[[:space:]]+(blue|green)[[:space:]]*;.*/\1/p' "$ACTIVE_CONF" | head -1; }
+nama_app() { echo "$APP-app-$1-1"; }
+jalan() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+sehat() { [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$1" 2>/dev/null)" = healthy ]; }
+tunggu_sehat() {   # tunggu_sehat <container> <detik>
+    local c="$1" batas="$2" s="-"
+    for _ in $(seq 1 $((batas / 3))); do
+        s="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$c" 2>/dev/null || echo -)"
+        case "$s" in healthy) return 0 ;; unhealthy|exited|dead) break ;; esac
+        sleep 3
+    done
+    echo "  $c: $s. Log terakhir:"; docker logs --tail 40 "$c" 2>&1 | sed 's/^/    /'; return 1
+}
+# /up warna tertentu LEWAT EDGE (menguji jalur edge -> php-fpm warna itu). DNS
+# Docker di edge di-cache 10 detik, jadi container yang baru dibuat bisa butuh
+# beberapa detik sebelum terjangkau.
+cek_up() {   # cek_up <warna> -> 0 kalau sehat
+    local w="$1" r
+    for _ in $(seq 1 12); do
+        r="$(docker exec "$EDGE" wget -qO- -T 10 "http://127.0.0.1:$UP_PORT/up/$w" 2>/dev/null || true)"
+        if grep -qiE "$UP_POLA" <<<"$r"; then return 0; fi
+        sleep 3
+    done
+    echo "  /up/$w lewat edge tidak sehat. Jawaban terakhir: $(head -c 300 <<<"$r")"
+    return 1
+}
+warna_dimuat() { docker exec "$EDGE" wget -qO- -T 5 "http://127.0.0.1:$UP_PORT/warna" 2>/dev/null | tr -d '[:space:]'; }
+# Uji asap khusus aplikasi (halaman tanpa login, koneksi database) langsung ke
+# php-fpm warna itu, SEBELUM trafik dipindah. Kosong = tidak ada uji tambahan.
+uji_asap() {   # uji_asap <warna> -> 0 kalau lolos
+    [ -n "$UJI_ASAP" ] || return 0
+    [ -x "$UJI_ASAP" ] || { echo "  $UJI_ASAP tidak ada (jalankan vps1-*-siapkan.sh)."; return 1; }
+    "$UJI_ASAP" "$(nama_app "$1")"
+}
+pindah_trafik() {   # pindah_trafik <warna>: tulis active.conf, nginx -t, reload; pulihkan kalau gagal
+    local w="$1" lama tmp r=""
+    lama="$(mktemp)"; cp -p "$ACTIVE_CONF" "$lama"
+    tmp="$(mktemp "$ACTIVE_CONF.XXXXXX")"
+    # shellcheck disable=SC2016  # "$host" adalah variabel Nginx, bukan shell.
+    printf 'map $host %s {\n    default %s;\n}\n' "$MAP_VAR" "$w" >"$tmp"
+    chmod 0644 "$tmp"; mv -f "$tmp" "$ACTIVE_CONF"
+    if ! docker exec "$EDGE" nginx -t >/dev/null 2>&1; then
+        cp -p "$lama" "$ACTIVE_CONF"; rm -f "$lama"
+        docker exec "$EDGE" nginx -t 2>&1 | sed 's/^/  /'
+        return 1
+    fi
+    docker exec "$EDGE" nginx -s reload
+    # Reload Nginx berjalan di latar; pastikan konfigurasi baru benar-benar
+    # dimuat lewat /warna di server internal situs ini.
+    for _ in $(seq 1 15); do
+        r="$(warna_dimuat)"
+        [ "$r" = "$w" ] && break
+        sleep 1
+    done
+    if [ -z "$r" ]; then
+        echo "  (Tidak bisa memastikan reload: /warna belum ada di konfigurasi edge. Jalankan vps1-edge.sh sinkron.)"
+    elif [ "$r" != "$w" ]; then
+        echo "  Nginx masih memuat warna $r; active.conf dipulihkan."
+        cp -p "$lama" "$ACTIVE_CONF"; rm -f "$lama"
+        docker exec "$EDGE" nginx -s reload
+        return 1
+    fi
+    rm -f "$lama"
+}
+# Service latar (worker, scheduler, pdf, ...) yang SEDANG jalan. Yang mati
+# (mis. scheduler SIA sebelum cutover) tidak dinyalakan oleh deploy.
+latar_jalan() {
+    local s
+    for s in "${LATAR[@]}"; do
+        if [ -n "$(docker ps -q --filter "label=com.docker.compose.project=$APP" \
+                     --filter "label=com.docker.compose.service=$s")" ]; then
+            echo "$s"
+        fi
+    done
+}
+perbarui_latar() {   # perbarui_latar <tag>
+    local tag="$1" svc
+    mapfile -t svc < <(latar_jalan)
+    env_tulis "$VAR" "$tag"
+    if [ ${#svc[@]} -eq 0 ]; then
+        echo "  Tidak ada service latar yang jalan; hanya $VAR yang diperbarui."
+        return 0
+    fi
+    echo "  Membuat ulang dengan $tag: ${svc[*]}"
+    # Job yang sedang berjalan diberi waktu selesai (stop_grace_period).
+    # shellcheck disable=SC2086
+    dc $LATAR_PROFIL up -d --no-deps "${svc[@]}" >/dev/null
+    sleep 5
+    local s bermasalah=""
+    for s in "${svc[@]}"; do
+        if docker ps -a --filter "label=com.docker.compose.project=$APP" --filter "label=com.docker.compose.service=$s" \
+               --format '{{.Status}}' | grep -iE 'restarting|exited' >/dev/null; then
+            bermasalah+="$s "
+        fi
+    done
+    [ -z "$bermasalah" ] || { echo "  Service latar bermasalah: $bermasalah"; return 1; }
+}
+siapkan_aset() {   # siapkan_aset <warna> <tag>: aset publik image -> /srv/<app>/public/<warna>
+    local w="$1" tag="$2" baru="$PUBLIC_DIR/$1.baru"
+    rm -rf "$baru"; install -d -m 0755 "$baru"
+    docker run --rm --network none --user 0:0 --entrypoint sh -v "$baru:/out" "$IMAGE_UTAMA:$tag" \
+        -c 'cp -a /var/www/html/public/. /out/'
+    # Symlink (folder unggahan, storage) tidak berguna di host; edge menyajikan
+    # unggahan dari volume tersendiri.
+    find "$baru" -type l -delete
+    chown -R root:root "$baru"; chmod -R a+rX,go-w "$baru"
+    [ -f "$baru/build/manifest.json" ] || { rm -rf "$baru"; echo "  build/manifest.json tidak ada di aset."; return 1; }
+    rm -rf "$PUBLIC_DIR/$w.lama"
+    if [ -d "$PUBLIC_DIR/$w" ]; then mv "$PUBLIC_DIR/$w" "$PUBLIC_DIR/$w.lama"; fi
+    mv "$baru" "$PUBLIC_DIR/$w"
+    rm -rf "$PUBLIC_DIR/$w.lama"
+}
+catat_riwayat() { echo "$(date '+%F %T') $*" >>"$RIWAYAT"; }
+
+prasyarat() {
+    [ -f "$DOCKER_DIR/compose.yaml" ] || gagal "$DOCKER_DIR/compose.yaml tidak ada."
+    [ -f "$ENVF" ] || gagal "$ENVF tidak ada."
+    [ -f "$ACTIVE_CONF" ] || gagal "$ACTIVE_CONF tidak ada."
+    jalan "$EDGE" || gagal "$EDGE tidak jalan."
+    AKTIF="$(warna_aktif)"
+    [ -n "$AKTIF" ] || gagal "warna aktif tidak terbaca dari $ACTIVE_CONF."
+    CADANGAN="$(lain "$AKTIF")"
+}
+
+status() {
+    prasyarat
+    local w
+    echo "Aplikasi : $APP"
+    echo "Aktif    : $AKTIF (menerima trafik)"
+    for w in blue green; do
+        local c; c="$(nama_app "$w")"
+        local st tg
+        # docker inspect mencetak baris kosong untuk container yang tidak ada.
+        st="$(docker inspect -f '{{.State.Status}}{{if .State.Health}} / {{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)" || st="belum dibuat"
+        tg="$(env_baca "${VAR}_$(besar "$w")")"
+        printf '  %-6s tag %-14s %s\n' "$w" "${tg:--}" "$st"
+    done
+    echo "Latar    : $VAR=$(env_baca "$VAR") ($(latar_jalan | tr '\n' ' '))"
+    echo "Riwayat  :"
+    tail -n 5 "$RIWAYAT" 2>/dev/null | sed 's/^/  /' || echo "  (belum ada)"
+}
+
+deploy() {
+    local arg="$1" tag sha="" n rev
+    tag="${arg:0:12}"; [ ${#arg} -eq 40 ] && sha="$arg"
+    prasyarat
+    local tag_lama; tag_lama="$(env_baca "${VAR}_$(besar "$AKTIF")")"
+
+    langkah "1. Image $tag"
+    for n in "${IMAGES[@]}"; do
+        docker image inspect "$n:$tag" >/dev/null 2>&1 \
+            || gagal "image $n:$tag tidak ada di vps1. Tarik dulu: $TARIK_SKRIP <commit 40 karakter>"
+        if [ -n "$sha" ]; then
+            rev="$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$n:$tag")"
+            [ "$rev" = "$sha" ] || gagal "image $n:$tag berasal dari commit $rev, bukan $sha."
+        fi
+    done
+    echo "  Aktif sekarang: $AKTIF ($tag_lama). Versi baru dipasang di: $CADANGAN."
+    [ "$tag" != "$tag_lama" ] || echo "  Catatan: tag sama dengan yang aktif (deploy ulang)."
+
+    langkah "2. Aset publik ($CADANGAN)"
+    siapkan_aset "$CADANGAN" "$tag" || gagal "aset publik $CADANGAN gagal disiapkan."
+    echo "  $(find "$PUBLIC_DIR/$CADANGAN" -type f | wc -l) file."
+
+    if [ -n "${PRA_DEPLOY:-}" ]; then
+        langkah "2b. Pra-deploy: $(basename "$PRA_DEPLOY") $tag"
+        [ -x "$PRA_DEPLOY" ] || gagal "$PRA_DEPLOY tidak ada (jalankan vps1-*-siapkan.sh)."
+        "$PRA_DEPLOY" "$tag" \
+            || gagal "pra-deploy ($(basename "$PRA_DEPLOY")) gagal; trafik TETAP di $AKTIF ($tag_lama)."
+    fi
+
+    langkah "3. app-$CADANGAN dengan $tag"
+    local env_cadangan; env_cadangan="$(mktemp)"; cp -p "$ENVF" "$env_cadangan"
+    env_tulis "${VAR}_$(besar "$CADANGAN")" "$tag"
+    if ! dc --profile "$CADANGAN" up -d --no-deps --force-recreate "app-$CADANGAN" >/dev/null \
+       || ! tunggu_sehat "$(nama_app "$CADANGAN")" 240 \
+       || ! cek_up "$CADANGAN" \
+       || ! uji_asap "$CADANGAN"; then
+        dc --profile "$CADANGAN" stop "app-$CADANGAN" >/dev/null 2>&1 || true
+        cp -p "$env_cadangan" "$ENVF"; rm -f "$env_cadangan"
+        gagal "app-$CADANGAN dengan $tag tidak sehat; trafik TETAP di $AKTIF ($tag_lama)."
+    fi
+    rm -f "$env_cadangan"
+    echo "  app-$CADANGAN sehat, /up lewat edge OK${UJI_ASAP:+, uji asap OK}."
+
+    langkah "4. Pindah trafik $AKTIF -> $CADANGAN"
+    pindah_trafik "$CADANGAN" || gagal "pindah trafik gagal; trafik TETAP di $AKTIF ($tag_lama)."
+    catat_riwayat "deploy $AKTIF($tag_lama) -> $CADANGAN($tag)"
+    echo "  Trafik sekarang di $CADANGAN ($tag). app-$AKTIF ($tag_lama) tetap jalan untuk rollback cepat."
+
+    langkah "5. Service latar"
+    if ! perbarui_latar "$tag"; then
+        notify "Deploy $APP: trafik di $CADANGAN ($tag), TAPI service latar bermasalah. Cek: $APP-deploy status"
+        echo "Trafik sudah pindah, tetapi ada service latar bermasalah. Cek log, atau: $APP-deploy rollback" >&2
+        exit 1
+    fi
+
+    langkah "SELESAI"
+    notify "Deploy $APP OK: $AKTIF($tag_lama) -> $CADANGAN($tag)"
+    echo "Rollback (kembali ke $tag_lama di $AKTIF): $APP-deploy rollback"
+    echo "Bebaskan memori app-$AKTIF kalau versi baru sudah yakin baik: $APP-deploy matikan-cadangan"
+}
+
+rollback() {
+    prasyarat
+    local tujuan="$CADANGAN" c tag_tujuan
+    c="$(nama_app "$tujuan")"
+    tag_tujuan="$(env_baca "${VAR}_$(besar "$tujuan")")"
+    langkah "Rollback $AKTIF -> $tujuan ($tag_tujuan)"
+    if ! jalan "$c" || ! sehat "$c"; then
+        gagal "app-$tujuan tidak jalan/sehat; rollback cepat tidak bisa. Deploy ulang tag lama: $APP-deploy <tag>"
+    fi
+    cek_up "$tujuan" || gagal "/up app-$tujuan tidak sehat; rollback dibatalkan."
+    if [ "${2:-}" != --ya ]; then
+        echo "Catatan: perubahan skema database oleh versi yang sekarang TIDAK ikut dibatalkan."
+        read -r -p "Ketik ROLLBACK untuk memindah trafik ke $tujuan ($tag_tujuan): " j
+        [ "$j" = ROLLBACK ] || { echo "Dibatalkan."; exit 0; }
+    fi
+    pindah_trafik "$tujuan" || gagal "pindah trafik gagal; trafik TETAP di $AKTIF."
+    catat_riwayat "rollback $AKTIF -> $tujuan($tag_tujuan)"
+    perbarui_latar "$tag_tujuan" || { notify "Rollback $APP: trafik di $tujuan, service latar bermasalah"; exit 1; }
+    notify "Rollback $APP OK: trafik kembali ke $tujuan ($tag_tujuan)"
+    echo "SELESAI. Trafik di $tujuan ($tag_tujuan)."
+}
+
+matikan_cadangan() {
+    prasyarat
+    local c; c="$(nama_app "$CADANGAN")"
+    jalan "$c" || { echo "app-$CADANGAN sudah tidak jalan."; exit 0; }
+    dc --profile "$CADANGAN" stop "app-$CADANGAN" >/dev/null
+    catat_riwayat "matikan-cadangan app-$CADANGAN"
+    echo "app-$CADANGAN dihentikan. Rollback cepat tidak tersedia sampai deploy berikutnya."
+}
+
+case "$PERINTAH" in
+    status) status ;;
+    rollback) rollback "$@" ;;
+    matikan-cadangan) matikan_cadangan ;;
+    *) deploy "$PERINTAH" ;;
+esac
