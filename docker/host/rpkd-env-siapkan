@@ -38,7 +38,10 @@ baca_secret() {
     [ -s "$f" ] || { echo "Secret $f belum ada (jalankan vps1-rpkd-siapkan.sh)." >&2; exit 1; }
     tr -d '\r\n' < "$f"
 }
-lama() { [ -f "$APP_ENVF" ] && grep -E "^$1=" "$APP_ENVF" | tail -1 | cut -d= -f2- || true; }
+lama() {   # lama <KUNCI>: nilai kunci itu di rpkd.env yang sudah ada (kosong kalau tidak ada)
+    [ -f "$APP_ENVF" ] || return 0
+    grep -E "^$1=" "$APP_ENVF" | tail -1 | cut -d= -f2- || true
+}
 
 APP_KEY="$(lama APP_KEY)"
 if [[ "$APP_KEY" =~ ^base64:[A-Za-z0-9+/]{43}=$ ]]; then
