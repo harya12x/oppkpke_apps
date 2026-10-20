@@ -6,6 +6,7 @@
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="robots" content="noindex, nofollow">
     <title>Login - OPPKPKE Sistem Pengentasan Kemiskinan</title>
+    @include('partials.favicon')
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -62,7 +63,7 @@
 
         {{-- Kiri: Logo + Judul --}}
         <div class="fade-up max-w-lg text-center lg:text-left" style="animation-delay:.05s">
-            <img src="{{ asset('Logo_app_new.png') }}" alt="Logo OPPKPKE" class="w-24 sm:w-32 lg:w-40 h-auto mx-auto lg:mx-0 mb-4 sm:mb-5 drop-shadow-lg">
+            <img src="{{ \App\Support\Brand::url('logo') }}" alt="Logo BAPADU Kotabaru" class="w-24 sm:w-32 lg:w-40 h-auto mx-auto lg:mx-0 mb-4 sm:mb-5 drop-shadow-lg">
             <h1 class="text-2xl sm:text-4xl lg:text-5xl font-extrabold leading-tight tracking-tight">
                 Pusat Analisis, Sinkronisasi Data dan<br>Tata Kelola Intervensi
             </h1>

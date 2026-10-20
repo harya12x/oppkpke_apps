@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'OPPKPKE') - Sistem Pengentasan Kemiskinan</title>
+    @include('partials.favicon')
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
@@ -82,12 +83,13 @@
 
         {{-- Brand + Close button (mobile) --}}
         <div class="p-4 border-b border-blue-700 flex items-center justify-between gap-2">
-            <div class="min-w-0">
-                <h1 class="text-lg font-bold flex items-center gap-2 truncate">
-                    <i class="fas fa-hand-holding-heart text-yellow-400 flex-shrink-0"></i>
-                    OPPKPKE
-                </h1>
-                <p class="text-blue-200 text-xs mt-0.5 truncate">Sistem Pengentasan Kemiskinan</p>
+            <div class="min-w-0 flex items-center gap-3">
+                <img src="{{ \App\Support\Brand::url('logo-sm') }}" alt="Logo BAPADU Kotabaru"
+                     class="w-10 h-auto flex-shrink-0 drop-shadow">
+                <div class="min-w-0">
+                    <h1 class="text-lg font-bold truncate">OPPKPKE</h1>
+                    <p class="text-blue-200 text-xs mt-0.5 truncate">Sistem Pengentasan Kemiskinan</p>
+                </div>
             </div>
             <button onclick="closeSidebar()"
                     class="lg:hidden flex-shrink-0 p-1.5 rounded-lg text-blue-300 hover:text-white hover:bg-white/10 transition"
@@ -440,9 +442,9 @@
 
                 {{-- Brand ringkas (mobile only) — pengganti hamburger --}}
                 <a href="{{ route('oppkpke.dashboard') }}"
-                   class="lg:hidden flex-shrink-0 w-9 h-9 rounded-lg bg-slate-700 text-white flex items-center justify-center"
+                   class="lg:hidden flex-shrink-0 h-9 flex items-center justify-center"
                    aria-label="Beranda">
-                    <i class="fas fa-hand-holding-heart text-sm"></i>
+                    <img src="{{ \App\Support\Brand::url('logo-sm') }}" alt="Logo BAPADU Kotabaru" class="h-9 w-auto">
                 </a>
 
                 <div class="flex-1 min-w-0">

@@ -17,6 +17,16 @@ export default defineConfig({
         tailwindcss(),
     ],
     server: {
+        // Paksa IPv4 127.0.0.1 — di Windows Vite bisa bind ke [::1] (IPv6), dan
+        // CSP tidak mendukung alamat IPv6 literal ("invalid source, ignored"),
+        // sehingga aset dev (@vite) terblokir. Dengan host tetap 127.0.0.1, file
+        // `public/hot` menulis http://127.0.0.1:5173 yang valid untuk CSP.
+        host: '127.0.0.1',
+        port: 5173,
+        strictPort: true,
+        hmr: {
+            host: '127.0.0.1',
+        },
         watch: {
             ignored: ['**/storage/framework/views/**'],
         },

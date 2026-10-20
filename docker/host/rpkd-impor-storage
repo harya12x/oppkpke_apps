@@ -1,0 +1,40 @@
+#!/bin/bash
+# =============================================================================
+# rpkd-impor-storage <arsip.tar.gz> [--simpan]
+#
+# Pulihkan isi storage/app server lama (lampiran chat di app/private, file
+# import, disk public) ke /srv/rpkd/storage/app di vps1. Arsipnya dibuat
+# ambil-dari-server-lama.sh (deploy/pindah-ke-vps1/). File yang sudah ada
+# dengan nama sama ditimpa; file lain di vps1 tidak dihapus.
+#
+#   - Ditolak kalau arsip memuat path absolut, "..", symlink, atau device.
+#   - Pemilik jadi www-data (33), folder 0750, file 0640.
+#   - Arsip dihapus aman (shred) setelah berhasil, kecuali --simpan.
+# =============================================================================
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Jalankan sebagai root." >&2; exit 1; }
+F="${1:?Pemakaian: rpkd-impor-storage <arsip.tar.gz> [--simpan]}"
+SIMPAN=0; [ "${2:-}" = --simpan ] && SIMPAN=1
+TUJUAN=/srv/rpkd/storage/app
+[ -s "$F" ] || { echo "File tidak ada atau kosong: $F" >&2; exit 1; }
+gzip -t "$F" || { echo "Arsip rusak/terpotong: $F" >&2; exit 1; }
+[ -d "$TUJUAN" ] || { echo "$TUJUAN belum ada (vps1-rpkd-siapkan.sh)." >&2; exit 1; }
+
+# Periksa isi sebelum diekstrak: hanya file dan folder biasa, path relatif di bawah ./
+if tar -tvzf "$F" | awk '{print substr($1,1,1)}' | grep -qv '[-d]'; then
+    echo "Arsip memuat symlink/device; ditolak." >&2; exit 1
+fi
+if tar -tzf "$F" | grep -qE '(^/|(^|/)\.\.(/|$))'; then
+    echo "Arsip memuat path absolut atau '..'; ditolak." >&2; exit 1
+fi
+JML="$(tar -tzf "$F" | grep -vc '/$' || true)"
+echo "Arsip: $JML file, $(du -h "$F" | cut -f1). Ringkasan folder teratas:"
+tar -tzf "$F" | grep -v '/$' | sed -E 's#^\./##' | cut -d/ -f1-2 | sort | uniq -c | sort -rn | head -10 | sed 's/^/  /'
+
+tar -xzf "$F" -C "$TUJUAN" --no-same-owner --no-same-permissions --no-overwrite-dir
+chown -R 33:33 "$TUJUAN"
+find "$TUJUAN" -type d -exec chmod 0750 {} +
+find "$TUJUAN" -type f -exec chmod 0640 {} +
+echo "Terpasang di $TUJUAN ($(find "$TUJUAN" -type f ! -name .gitignore | wc -l) file)."
+
+if [ "$SIMPAN" = 0 ]; then shred -u "$F"; echo "Arsip dihapus aman: $F"; fi

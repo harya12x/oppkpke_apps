@@ -113,10 +113,13 @@
     @endphp
     <div class="hidden print:block">
         <div class="flex items-end justify-between gap-4 border-b-2 border-slate-700 pb-2">
-            <div>
-                <p class="text-[10px] font-semibold tracking-wider text-slate-500 uppercase">OPPKPKE · Sistem Pengentasan Kemiskinan</p>
-                <h1 class="text-xl font-bold text-slate-800 leading-tight">Ikhtisar Eksekutif — Tahun Anggaran {{ $tahun }}</h1>
-                <p class="text-xs text-slate-500">Ringkasan anggaran pengentasan kemiskinan untuk pimpinan</p>
+            <div class="flex items-center gap-3">
+                <img src="{{ \App\Support\Brand::url('logo') }}" alt="Logo BAPADU Kotabaru" class="h-14 w-auto">
+                <div>
+                    <p class="text-[10px] font-semibold tracking-wider text-slate-500 uppercase">OPPKPKE · Sistem Pengentasan Kemiskinan</p>
+                    <h1 class="text-xl font-bold text-slate-800 leading-tight">Ikhtisar Eksekutif — Tahun Anggaran {{ $tahun }}</h1>
+                    <p class="text-xs text-slate-500">Ringkasan anggaran pengentasan kemiskinan untuk pimpinan</p>
+                </div>
             </div>
             <div class="text-right text-[10px] text-slate-500 leading-relaxed whitespace-nowrap">
                 <p>Data dihitung: {{ $d['generated_at'] }}</p>

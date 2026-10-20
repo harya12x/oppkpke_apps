@@ -25,6 +25,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rekap Pengguna — OPPKPKE</title>
+@include('partials.favicon')
 <style>
     :root {
         --primary:   #1e3a8a;   /* blue-900 */
@@ -68,15 +69,7 @@
         border-bottom: 3px solid var(--primary);
         padding-bottom: 12px;
     }
-    .kop .logo {
-        width: 64px; height: 64px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, var(--primary), var(--primary-2));
-        color: #fbbf24;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 30px; flex-shrink: 0;
-        box-shadow: inset 0 0 0 3px rgba(255,255,255,.35);
-    }
+    .kop .logo { width: 60px; height: auto; flex-shrink: 0; }
     .kop .titles { flex: 1; text-align: center; line-height: 1.35; }
     .kop .titles .gov   { font-size: 13px; font-weight: 700; letter-spacing: .5px; }
     .kop .titles .org   { font-size: 18px; font-weight: 800; color: var(--primary); letter-spacing: .5px; }
@@ -233,7 +226,7 @@
 
         {{-- ── KOP SURAT ── --}}
         <div class="kop">
-            <div class="logo">&#10084;</div>
+            <img class="logo" src="{{ \App\Support\Brand::url('logo') }}" alt="Logo BAPADU Kotabaru">
             <div class="titles">
                 <div class="gov">PEMERINTAH KABUPATEN KOTABARU</div>
                 <div class="org">OPPKPKE</div>

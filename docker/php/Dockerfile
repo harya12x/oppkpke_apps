@@ -103,6 +103,10 @@ RUN set -eux; \
     composer dump-autoload --no-dev --optimize --no-scripts --no-interaction; \
     php artisan package:discover --ansi \
         || echo "PERINGATAN: package:discover gagal saat build; diulang di entrypoint"; \
+    # Varian logo (sidebar, ikon tab, PDF) dibuat dari config app.logo → logo baru ikut rilis.
+    # Gagal pun aman: App\Support\Brand otomatis memakai file logo sumber.
+    php artisan brand:sync --ansi \
+        || echo "PERINGATAN: brand:sync gagal saat build; logo memakai file sumber"; \
     rm /usr/bin/composer; \
     # Setara `php artisan storage:link`; root filesystem read-only saat runtime.
     ln -sfn ../storage/app/public public/storage; \

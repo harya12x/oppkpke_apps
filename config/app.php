@@ -17,6 +17,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Application Logo
+    |--------------------------------------------------------------------------
+    |
+    | File logo (PNG, relatif terhadap folder public/) — satu sumber untuk
+    | halaman login, sidebar, ikon tab browser, kop PDF & cetak. Lihat
+    | App\Support\Brand. Ganti logo: timpa file ini (atau ubah APP_LOGO),
+    | jalankan `php artisan brand:sync`, lalu rilis.
+    |
+    */
+
+    'logo' => env('APP_LOGO', 'Logo_Baru.png'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |

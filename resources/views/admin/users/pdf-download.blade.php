@@ -36,11 +36,7 @@
     }
     .kop table { width: 100%; border-collapse: collapse; }
     .kop .logo-cell { width: 56px; vertical-align: middle; }
-    .kop .logo {
-        width: 46px; height: 46px; background-color: #1e3a8a;
-        border-radius: 23px; color: #fbbf24; text-align: center;
-        font-size: 24px; line-height: 46px;
-    }
+    .kop .logo { width: 44px; height: auto; }
     .kop .gov  { font-size: 11px; font-weight: bold; color: #111827; }
     .kop .org  { font-size: 16px; font-weight: bold; color: #1e3a8a; }
     .kop .sub  { font-size: 8.5px; color: #6b7280; }
@@ -120,7 +116,7 @@
     <div class="kop">
         <table>
             <tr>
-                <td class="logo-cell"><div class="logo">&#9829;</div></td>
+                <td class="logo-cell"><img class="logo" src="{{ \App\Support\Brand::path('pdf') }}" alt="Logo"></td>
                 <td align="center">
                     <div class="gov">PEMERINTAH KABUPATEN KOTABARU</div>
                     <div class="org">OPPKPKE</div>
