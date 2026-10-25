@@ -292,6 +292,7 @@ jobs:
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
+          pull: true
           context: .
           file: docker/php/Dockerfile
           load: true
@@ -306,6 +307,21 @@ jobs:
             org.opencontainers.image.created=${{ steps.nama.outputs.waktu }}
           cache-from: type=gha,scope=rpkd-php
           cache-to: type=gha,mode=max,scope=rpkd-php
+
+      - name: PHP sudah ditambal (PHP2Shell CVE-2026-109618/109619)
+        run: |
+          # Trivy tidak melihat PHP image resmi (dikompilasi dari source).
+          # Rilis keamanan PHP baru: perbarui $min di sini DAN MINIMUM di vps1-cek-php.
+          docker run --rm --entrypoint php "${{ steps.nama.outputs.lokal }}" -r '
+            $min = ["8.2" => "8.2.35", "8.3" => "8.3.36", "8.4" => "8.4.27", "8.5" => "8.5.12"];
+            $c = PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;
+            if (!isset($min[$c])) {
+                fwrite(STDERR, "::error::PHP " . PHP_VERSION . ": cabang EOL/tidak dikenal, perbarui daftar minimum\n"); exit(1);
+            }
+            if (version_compare(PHP_VERSION, $min[$c], "<")) {
+                fwrite(STDERR, "::error::PHP " . PHP_VERSION . " rentan, minimum " . $min[$c] . "\n"); exit(1);
+            }
+            echo "PHP " . PHP_VERSION . " OK (>= " . $min[$c] . ")\n";'
 
       - name: Image tidak membawa rahasia atau data
         run: |
