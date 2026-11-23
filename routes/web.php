@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\HierarkiHapusController;
 use App\Http\Controllers\HierarkiImportController;
 use App\Http\Controllers\OppkpkeController;
 use App\Http\Controllers\PaguController;
@@ -104,6 +105,19 @@ Route::prefix('oppkpke')->name('oppkpke.')->middleware('auth')->group(function (
         ->middleware('throttle:60,1')->name('program.update');
     Route::patch('/kegiatan/{id}', [OppkpkeController::class, 'kegiatanUpdate'])
         ->middleware('throttle:60,1')->name('kegiatan.update');
+
+    // Hapus program/kegiatan/sub kegiatan → masuk "Data Terhapus", bisa dikembalikan.
+    // Operator daerah terkunci ke PD-nya (dicek di HierarkiSampahService).
+    Route::middleware(['pic.identity', 'role:master,it_team,daerah'])->group(function () {
+        Route::get('/hierarki-terhapus', [HierarkiHapusController::class, 'index'])->name('hierarki.sampah');
+        Route::post('/hierarki-terhapus/{batch}/kembalikan', [HierarkiHapusController::class, 'restore'])
+            ->whereNumber('batch')->middleware('throttle:30,1')->name('hierarki.kembalikan');
+        Route::get('/hierarki/{jenis}/{id}/hapus', [HierarkiHapusController::class, 'info'])
+            ->whereIn('jenis', ['program', 'kegiatan', 'sub-kegiatan'])->whereNumber('id')->name('hierarki.hapus.info');
+        Route::delete('/hierarki/{jenis}/{id}', [HierarkiHapusController::class, 'destroy'])
+            ->whereIn('jenis', ['program', 'kegiatan', 'sub-kegiatan'])->whereNumber('id')
+            ->middleware('throttle:30,1')->name('hierarki.hapus');
+    });
 
     // --------------------------------------------------
     // IMPORT HIERARKI via Excel (Admin) — PD → Strategi → Program → Kegiatan → Sub.

@@ -11,6 +11,15 @@ class Program extends Model
 {
     protected $table = 'programs';
 
+    protected static function booted(): void
+    {
+        static::saving(function (Program $program) {
+            if ($program->is_active && $program->getAttribute('hapus_batch_id')) {
+                $program->hapus_batch_id = null;   // diaktifkan lewat Eloquent → keluar dari Data Terhapus
+            }
+        });
+    }
+
     protected $fillable = [
         'strategi_id',
         'perangkat_daerah_id',

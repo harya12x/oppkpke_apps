@@ -106,6 +106,21 @@
             </div>
         </div>
 
+        {{-- Hapus & Data Terhapus --}}
+        <div class="bg-white border-2 border-red-100 rounded-lg p-3 md:p-4 mt-4">
+            <p class="text-sm font-semibold text-gray-800 mb-2"><i class="fas fa-trash-can text-red-500 mr-1"></i> Menghapus &amp; Mengembalikan Program / Kegiatan / Sub Kegiatan</p>
+            <ol class="text-sm text-gray-700 space-y-1.5 list-decimal list-inside">
+                <li>Di halaman <strong>Input Data</strong>, klik tombol merah <strong>Hapus</strong> di samping nama program, kegiatan, atau sub kegiatan.</li>
+                <li>Baca jendela konfirmasi. Bila sudah ada data laporan, centang <em>"Saya mengerti"</em>, lalu klik <strong>Ya, Hapus</strong>.</li>
+                <li>Salah hapus? Langsung klik <strong>Batalkan</strong> pada kotak hitam di bawah layar.</li>
+                <li>Ingin memakai lagi nanti? Klik tombol <strong>Data Terhapus</strong> di atas daftar, lalu klik <strong>Kembalikan</strong>.</li>
+            </ol>
+            <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-3">
+                <i class="fas fa-lightbulb mr-1"></i> Penghapusan berlaku untuk <strong>semua tahun</strong>. Bila suatu item hanya
+                <strong>tidak ada di DPA tahun ini</strong>, cukup <strong>biarkan kosong</strong> — tidak perlu dihapus. Item kosong tidak ikut masuk Rekap Laporan.
+            </p>
+        </div>
+
         {{-- Bantuan --}}
         <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4 text-sm text-blue-800">
             <i class="fas fa-headset mr-1"></i> Kendala saat input? Hubungi <strong>Tim IT</strong> lewat menu

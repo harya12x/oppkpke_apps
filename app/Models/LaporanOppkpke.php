@@ -5,12 +5,25 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Services\HierarkiSampahService;
 
 class LaporanOppkpke extends Model
 {
     use SoftDeletes;
 
     protected $table = 'laporan_oppkpke';
+
+    protected static function booted(): void
+    {
+        // Laporan aktif tidak boleh menempel pada sub kegiatan yang ada di Data
+        // Terhapus (terhitung di total, tapi tak terlihat di layar). Bila itu
+        // terjadi (mis. import RAT), sub kegiatan & induknya aktif kembali.
+        static::saving(function (LaporanOppkpke $laporan) {
+            if ($laporan->sub_kegiatan_id && $laporan->deleted_at === null) {
+                HierarkiSampahService::aktifkanBilaTerhapus((int) $laporan->sub_kegiatan_id);
+            }
+        });
+    }
 
     protected $fillable = [
         'sub_kegiatan_id',

@@ -6,6 +6,12 @@
 
 @section('content')
 
+@php
+    // Hapus & Data Terhapus: Admin Master, Tim IT, dan Operator Daerah yang terhubung ke PD.
+    $idxCanHapus = auth()->user()->isMaster() || auth()->user()->isItTeam()
+        || (auth()->user()->isDaerah() && auth()->user()->perangkat_daerah_id);
+@endphp
+
 {{-- ── Mobile: filter toggle button ──────────────────────── --}}
 <button onclick="toggleFilterPanel()"
         class="lg:hidden w-full mb-3 flex items-center justify-between bg-white rounded-xl border shadow-sm px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
@@ -147,6 +153,14 @@
                         title="Pilih sub kegiatan lalu isi anggaran & realisasinya">
                     <i class="fas fa-pen-to-square mr-1"></i> Isi Laporan
                 </button>
+                @if($idxCanHapus)
+                <button type="button" onclick="spOpen()"
+                        class="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-lg text-xs md:text-sm hover:bg-gray-50 transition"
+                        title="Lihat dan kembalikan data yang pernah dihapus">
+                    <i class="fas fa-trash-arrow-up mr-1 text-gray-500"></i> Data Terhapus
+                    <span id="sp-badge" class="hidden ml-1.5 min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold items-center justify-center">0</span>
+                </button>
+                @endif
                 <a href="{{ route('oppkpke.export.excel', request()->query()) }}"
                    class="px-2 md:px-3 py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 transition">
                     <i class="fas fa-file-excel"></i>
@@ -393,6 +407,68 @@
                 </button>
             </div>
         </div>
+    </div>
+</div>
+@endif
+
+@if($idxCanHapus)
+{{-- ── Modal: Konfirmasi Hapus (program / kegiatan / sub kegiatan) ─────── --}}
+<div id="hpModal" class="fixed inset-0 z-[75] hidden items-center justify-center p-3 md:p-4" role="dialog" aria-modal="true" aria-labelledby="hp-title">
+    <div class="absolute inset-0 bg-black/50" onclick="hpClose()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg z-10 overflow-hidden flex flex-col max-h-[92vh]">
+        <div class="bg-red-600 px-5 py-4 flex items-center justify-between flex-shrink-0">
+            <h3 id="hp-title" class="text-white font-bold text-lg flex items-center gap-2">
+                <i class="fas fa-trash-can"></i> <span id="hp-title-text">Hapus</span>
+            </h3>
+            <button type="button" onclick="hpClose()" class="text-white/80 hover:text-white p-1" aria-label="Tutup"><i class="fas fa-times text-2xl"></i></button>
+        </div>
+        <div id="hp-body" class="p-5 overflow-y-auto text-base text-gray-700 space-y-4"></div>
+        <div class="px-5 py-4 bg-gray-50 border-t flex flex-col-reverse sm:flex-row gap-3 flex-shrink-0">
+            <button type="button" onclick="hpClose()"
+                    class="flex-1 py-3 rounded-xl border-2 border-gray-300 bg-white text-gray-700 text-base font-semibold hover:bg-gray-100 transition">
+                Batal
+            </button>
+            <button type="button" id="hp-ok" onclick="hpSubmit()" disabled
+                    class="flex-1 py-3 rounded-xl bg-red-600 text-white text-base font-bold hover:bg-red-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                <i class="fas fa-trash-can mr-1"></i> Ya, Hapus
+            </button>
+        </div>
+    </div>
+</div>
+
+{{-- ── Modal: Data Terhapus (lihat & kembalikan) ────────────────────────── --}}
+<div id="spModal" class="fixed inset-0 z-[72] hidden items-center justify-center p-3 md:p-4" role="dialog" aria-modal="true" aria-labelledby="sp-title">
+    <div class="absolute inset-0 bg-black/50" onclick="spClose()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl z-10 overflow-hidden flex flex-col max-h-[92vh]">
+        <div class="bg-gradient-to-r from-slate-700 to-slate-800 px-5 py-4 flex items-start justify-between gap-3 flex-shrink-0">
+            <div>
+                <h3 id="sp-title" class="text-white font-bold text-lg flex items-center gap-2"><i class="fas fa-trash-arrow-up"></i> Data Terhapus</h3>
+                <p class="text-white/80 text-sm mt-1">Data yang dihapus disimpan di sini. Klik <b>Kembalikan</b> bila ingin memakainya lagi.</p>
+            </div>
+            <button type="button" onclick="spClose()" class="text-white/80 hover:text-white p-1 flex-shrink-0" aria-label="Tutup"><i class="fas fa-times text-2xl"></i></button>
+        </div>
+        <div id="sp-alert" class="hidden mx-4 md:mx-5 mt-4 rounded-xl border-2 border-red-200 bg-red-50 text-red-800 p-3 text-sm flex items-start gap-2">
+            <i class="fas fa-circle-exclamation mt-0.5 flex-shrink-0"></i>
+            <span id="sp-alert-text" class="flex-1"></span>
+            <button type="button" onclick="spAlert('')" class="text-red-400 hover:text-red-700" aria-label="Tutup pesan"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="sp-body" class="p-4 md:p-5 overflow-y-auto space-y-3"></div>
+        <div class="px-5 py-3 bg-gray-50 border-t flex justify-end flex-shrink-0">
+            <button type="button" onclick="spClose()" class="px-6 py-2.5 rounded-xl border-2 border-gray-300 bg-white text-gray-700 text-base font-semibold hover:bg-gray-100 transition">Tutup</button>
+        </div>
+    </div>
+</div>
+
+{{-- ── Bar "Batalkan" setelah menghapus ─────────────────────────────────── --}}
+<div id="hp-undo" class="fixed left-1/2 -translate-x-1/2 bottom-5 z-[210] hidden w-[calc(100%-2rem)] max-w-xl" role="status" aria-live="polite">
+    <div class="bg-gray-900 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3">
+        <i class="fas fa-circle-check text-green-400 text-xl flex-shrink-0"></i>
+        <div id="hp-undo-text" class="flex-1 text-sm md:text-base"></div>
+        <button type="button" id="hp-undo-btn" onclick="hpUndo()"
+                class="flex-shrink-0 px-4 py-2 rounded-xl bg-yellow-400 text-gray-900 font-bold text-sm md:text-base hover:bg-yellow-300 transition disabled:opacity-60">
+            <i class="fas fa-rotate-left mr-1"></i> Batalkan
+        </button>
+        <button type="button" onclick="hpUndoHide()" class="text-white/60 hover:text-white p-1 flex-shrink-0" aria-label="Tutup"><i class="fas fa-times"></i></button>
     </div>
 </div>
 @endif
@@ -706,6 +782,8 @@ var _idxSumberItems = [
 
 // Edit nama program (operator daerah & master) — tombol pensil di pohon Input Data.
 var idxCanEditProgram = {{ (auth()->user()->isDaerah() || auth()->user()->isMaster()) ? 'true' : 'false' }};
+// Hapus → Data Terhapus (lihat blok "HAPUS & DATA TERHAPUS" di bawah).
+var idxCanHapus = {{ $idxCanHapus ? 'true' : 'false' }};
 function idxEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
 function idxSetBtn(field, value, label) {
@@ -892,12 +970,19 @@ function renderData(data) {
         var pd  = item.kegiatan?.program?.perangkat_daerah?.nama || '-';
         var pr  = item.kegiatan?.program?.nama_program     || '-';
         var kg  = item.kegiatan?.nama_kegiatan             || '-';
+        var prId = item.kegiatan?.program?.id;
+        var kgId = item.kegiatan?.id;
+        // Dikelompokkan per ID (bukan nama): dua program/kegiatan bernama sama tetap
+        // terpisah, sehingga tombol ubah/hapus selalu mengenai baris yang benar.
+        // Awalan huruf menjaga urutan tampil (kunci angka akan diurutkan otomatis).
+        var prKey = prId ? 'p' + prId : 'n' + pr;
+        var kgKey = kgId ? 'k' + kgId : 'n' + kg;
         tree[s] = tree[s] || { id: sId, perangkat: {} };
         tree[s].perangkat[pd] = tree[s].perangkat[pd] || { program: {} };
-        tree[s].perangkat[pd].program[pr] = tree[s].perangkat[pd].program[pr] || { id: item.kegiatan?.program?.id, kegiatan: {} };
-        var _kg = tree[s].perangkat[pd].program[pr].kegiatan;
-        _kg[kg] = _kg[kg] || { id: item.kegiatan?.id, items: [] };
-        _kg[kg].items.push(item);
+        tree[s].perangkat[pd].program[prKey] = tree[s].perangkat[pd].program[prKey] || { id: prId, nama: pr, kegiatan: {} };
+        var _kg = tree[s].perangkat[pd].program[prKey].kegiatan;
+        _kg[kgKey] = _kg[kgKey] || { id: kgId, nama: kg, items: [] };
+        _kg[kgKey].items.push(item);
     });
 
     var colors = {
@@ -916,7 +1001,7 @@ function renderData(data) {
         html += '<div class="px-3 md:px-4 py-3 ' + c.light + ' cursor-pointer flex items-center justify-between" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
         html += '<div class="flex items-center gap-2 min-w-0">';
         html += '<div class="w-7 h-7 md:w-8 md:h-8 ' + c.bg + ' rounded-lg flex items-center justify-center flex-shrink-0"><i class="fas fa-layer-group text-white text-xs"></i></div>';
-        html += '<div class="min-w-0"><div class="font-semibold ' + c.text + ' text-sm truncate">' + strategi + '</div>';
+        html += '<div class="min-w-0"><div class="font-semibold ' + c.text + ' text-sm truncate">' + idxEsc(strategi) + '</div>';
         html += '<div class="text-xs text-gray-500">' + pdCount + ' Perangkat Daerah</div></div>';
         html += '</div><i class="fas fa-chevron-down text-gray-400 flex-shrink-0"></i></div>';
         html += '<div class="accordion-content" style="display:none;">';
@@ -928,41 +1013,46 @@ function renderData(data) {
             html += '<div class="border-t">';
             html += '<div class="px-3 md:px-4 py-2 bg-gray-50 cursor-pointer flex items-center justify-between ml-2 md:ml-4" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
             html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-building text-gray-400 flex-shrink-0"></i>';
-            html += '<span class="font-medium text-gray-700 text-sm truncate">' + perangkat + '</span>';
+            html += '<span class="font-medium text-gray-700 text-sm truncate">' + idxEsc(perangkat) + '</span>';
             html += '<span class="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded flex-shrink-0">' + prCount + ' Program</span>';
             html += '</div><i class="fas fa-chevron-down text-gray-300 text-xs flex-shrink-0"></i></div>';
             html += '<div class="accordion-content" style="display:none;">';
 
-            Object.keys(pdData.program).forEach(function (program) {
-                var prData  = pdData.program[program];
+            Object.keys(pdData.program).forEach(function (prKey) {
+                var prData  = pdData.program[prKey];
+                var program = prData.nama;
                 var kgCount = Object.keys(prData.kegiatan).length;
 
                 html += '<div class="border-t border-dashed">';
                 html += '<div class="px-3 md:px-4 py-2 cursor-pointer flex items-center justify-between ml-4 md:ml-8 hover:bg-gray-50" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
                 html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-folder text-yellow-500 text-sm flex-shrink-0"></i>';
-                html += '<span class="text-sm text-gray-700 truncate">' + program + '</span>';
+                html += '<span class="text-sm text-gray-700 truncate">' + idxEsc(program) + '</span>';
                 if (idxCanEditProgram && prData.id) {
                     html += '<button type="button" class="idx-edit-prog text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + prData.id + '" data-name="' + idxEsc(program) + '" title="Ubah nama program" onclick="event.stopPropagation(); openEditNode(\'program\', this.getAttribute(\'data-id\'), this.getAttribute(\'data-name\'))"><i class="fas fa-pen text-[11px]"></i></button>';
                 }
                 html += '<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded flex-shrink-0">' + kgCount + ' Kegiatan</span>';
-                html += '</div><i class="fas fa-chevron-down text-gray-300 text-xs flex-shrink-0"></i></div>';
+                html += '</div><div class="flex items-center gap-2 flex-shrink-0">';
+                if (idxCanHapus && prData.id) html += hpBtn('program', prData.id);
+                html += '<i class="fas fa-chevron-down text-gray-300 text-xs"></i></div></div>';
                 html += '<div class="accordion-content" style="display:none;">';
 
-                Object.keys(prData.kegiatan).forEach(function (kegiatan) {
-                    var kgData      = prData.kegiatan[kegiatan];
+                Object.keys(prData.kegiatan).forEach(function (kgKey) {
+                    var kgData      = prData.kegiatan[kgKey];
+                    var kegiatan    = kgData.nama;
                     var items       = kgData.items;
                     var filledCount = items.filter(function (i) { return i.laporan && i.laporan[0] && i.laporan[0].alokasi_anggaran > 0; }).length;
 
                     html += '<div class="border-t border-dotted">';
                     html += '<div class="px-3 md:px-4 py-2 cursor-pointer flex items-center justify-between ml-6 md:ml-12 hover:bg-blue-50/50" onclick="$(this).next(\'.accordion-content\').slideToggle(200)">';
                     html += '<div class="flex items-center gap-2 min-w-0"><i class="fas fa-clipboard-list text-blue-400 text-sm flex-shrink-0"></i>';
-                    html += '<span class="text-sm text-gray-600 truncate">' + kegiatan + '</span>';
+                    html += '<span class="text-sm text-gray-600 truncate">' + idxEsc(kegiatan) + '</span>';
                     if (idxCanEditProgram && kgData.id) {
                         html += '<button type="button" class="idx-edit-keg text-gray-400 hover:text-indigo-600 flex-shrink-0" data-id="' + kgData.id + '" data-name="' + idxEsc(kegiatan) + '" title="Ubah nama kegiatan" onclick="event.stopPropagation(); openEditNode(\'kegiatan\', this.getAttribute(\'data-id\'), this.getAttribute(\'data-name\'))"><i class="fas fa-pen text-[11px]"></i></button>';
                     }
                     html += '</div>';
                     html += '<div class="flex items-center gap-1.5 flex-shrink-0">';
                     html += '<span class="text-xs ' + (filledCount === items.length ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700') + ' px-2 py-0.5 rounded">' + filledCount + '/' + items.length + '</span>';
+                    if (idxCanHapus && kgData.id) html += hpBtn('kegiatan', kgData.id);
                     html += '<i class="fas fa-chevron-down text-gray-300 text-xs"></i></div></div>';
                     html += '<div class="accordion-content bg-white" style="display:none;">';
 
@@ -975,7 +1065,7 @@ function renderData(data) {
                         html += '<div class="ml-8 md:ml-16 px-3 md:px-4 py-2 border-t border-gray-100 flex items-start justify-between gap-2 hover:bg-gray-50 ' + (!filled ? 'bg-yellow-50/30' : '') + '">';
                         html += '<div class="flex-1 min-w-0">';
                         html += '<div class="flex flex-wrap items-center gap-1.5">';
-                        html += '<span class="text-sm ' + (filled ? 'text-gray-700' : 'text-gray-500') + '">' + item.nama_sub_kegiatan + '</span>';
+                        html += '<span class="text-sm ' + (filled ? 'text-gray-700' : 'text-gray-500') + '">' + idxEsc(item.nama_sub_kegiatan) + '</span>';
                         if (!filled) html += '<span class="text-xs bg-yellow-100 text-yellow-600 px-1.5 py-0.5 rounded">Kosong</span>';
                         html += '</div>';
                         if (filled) {
@@ -985,9 +1075,12 @@ function renderData(data) {
                             html += '</div>';
                         }
                         html += '</div>';
+                        html += '<div class="flex items-center gap-1.5 flex-shrink-0">';
                         html += '<button onclick=\'openInputModal(' + itemJson + ')\' class="flex-shrink-0 px-2 md:px-3 py-1 text-xs ' + (filled ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' : 'bg-green-100 text-green-600 hover:bg-green-200') + ' rounded transition">';
                         html += filled ? '<i class="fas fa-edit"></i>' : '<i class="fas fa-plus"></i>';
-                        html += '</button></div>';
+                        html += '</button>';
+                        if (idxCanHapus) html += hpBtn('sub_kegiatan', item.id);
+                        html += '</div></div>';
                     });
 
                     html += '</div></div>';
@@ -1479,3 +1572,273 @@ document.addEventListener('change', function(e){
 @endif
 </script>
 @endpush
+
+@if($idxCanHapus)
+@push('scripts')
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   HAPUS & DATA TERHAPUS
+   Hapus = pindah ke "Data Terhapus" (tidak hilang), bisa dikembalikan.
+   Server: HierarkiHapusController / HierarkiSampahService.
+═══════════════════════════════════════════════════════════════════ */
+var HP_LABEL = { program: 'Program', kegiatan: 'Kegiatan', sub_kegiatan: 'Sub Kegiatan' };
+var HP_JENIS_URL = { program: 'program', kegiatan: 'kegiatan', sub_kegiatan: 'sub-kegiatan' };
+var HP_BASE = '{{ url('oppkpke') }}';
+var _hp = { jenis: null, id: null, busy: false };
+var _hpUndoBatch = null, _hpUndoTimer = null;
+
+/** Tombol "Hapus" di pohon. Nama tidak dibawa — diambil ulang dari server saat dibuka. */
+function hpBtn(jenis, id) {
+    var lbl = HP_LABEL[jenis].toLowerCase();
+    return '<button type="button" onclick="event.stopPropagation(); hpOpen(\'' + jenis + '\', ' + parseInt(id, 10) + ')"'
+        + ' class="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-200 bg-white text-red-600 hover:bg-red-50 hover:border-red-300 text-xs font-medium transition flex-shrink-0"'
+        + ' title="Hapus ' + lbl + ' ini" aria-label="Hapus ' + lbl + ' ini">'
+        + '<i class="fas fa-trash-can"></i><span class="hidden sm:inline">Hapus</span></button>';
+}
+
+function hpXhrMsg(xhr, bawaan) {
+    if (xhr && xhr.responseJSON && xhr.responseJSON.message) return xhr.responseJSON.message;
+    if (xhr && xhr.status === 419) return 'Sesi Anda sudah habis. Silakan muat ulang halaman (tekan F5).';
+    if (xhr && xhr.status === 429) return 'Terlalu banyak permintaan. Tunggu sebentar, lalu coba lagi.';
+    if (xhr && xhr.status === 403) return 'Anda tidak memiliki akses untuk tindakan ini.';
+    return bawaan;
+}
+function hpShowEl(id) { var m = document.getElementById(id); m.classList.remove('hidden'); m.classList.add('flex'); }
+function hpHideEl(id) { var m = document.getElementById(id); m.classList.add('hidden'); m.classList.remove('flex'); }
+function hpIsOpen(id) { return !document.getElementById(id).classList.contains('hidden'); }
+function hpLoadingHtml(teks) {
+    return '<div class="text-center py-10 text-gray-400"><i class="fas fa-spinner fa-spin text-3xl"></i><p class="mt-3 text-base">' + teks + '</p></div>';
+}
+function hpErrorHtml(pesan) {
+    return '<div class="rounded-xl border-2 border-red-200 bg-red-50 text-red-800 p-4 text-base"><i class="fas fa-circle-exclamation mr-1"></i> ' + idxEsc(pesan) + '</div>';
+}
+
+/* ── Konfirmasi hapus ─────────────────────────────────────────────── */
+function hpOpen(jenis, id) {
+    if (!HP_LABEL[jenis] || !id) return;
+    _hp = { jenis: jenis, id: id, busy: false };
+    document.getElementById('hp-title-text').textContent = 'Hapus ' + HP_LABEL[jenis];
+    $('#hp-body').html(hpLoadingHtml('Memeriksa data...'));
+    $('#hp-ok').prop('disabled', true);
+    hpShowEl('hpModal');
+    $.get(HP_BASE + '/hierarki/' + HP_JENIS_URL[jenis] + '/' + id + '/hapus')
+        .done(function (res) {
+            if (_hp.jenis !== jenis || _hp.id !== id) return;   // jendela sudah dipakai untuk item lain
+            hpRenderInfo(res.data);
+        })
+        .fail(function (xhr) { $('#hp-body').html(hpErrorHtml(hpXhrMsg(xhr, 'Gagal memeriksa data. Silakan coba lagi.'))); });
+}
+
+function hpRenderInfo(d) {
+    var lbl = d.label.toLowerCase();
+    var h = '<p>Anda akan menghapus ' + lbl + ' berikut:</p>';
+    h += '<div class="rounded-xl border-2 border-red-200 bg-red-50 p-4">';
+    h += '<div class="font-bold text-lg text-gray-900 break-words">' + idxEsc(d.nama) + '</div>';
+    if (d.lokasi) h += '<div class="text-sm text-gray-500 mt-1 break-words"><i class="fas fa-location-dot mr-1"></i>' + idxEsc(d.lokasi) + '</div>';
+    h += '</div>';
+
+    var ikut = [];
+    if (d.jumlah_kegiatan > 0) ikut.push('<b>' + d.jumlah_kegiatan + ' kegiatan</b>');
+    if (d.jumlah_sub > 0) ikut.push('<b>' + d.jumlah_sub + ' sub kegiatan</b>');
+    if (ikut.length) h += '<p><i class="fas fa-layer-group text-gray-400 mr-1"></i> Ikut terhapus: ' + ikut.join(' dan ') + ' di dalamnya.</p>';
+
+    var adaLaporan = d.jumlah_laporan > 0;
+    if (adaLaporan) {
+        h += '<div class="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 space-y-3">';
+        h += '<div class="font-bold text-amber-800"><i class="fas fa-triangle-exclamation mr-1"></i> Sudah ada data laporan yang diisi:</div>';
+        h += '<ul class="space-y-1.5">';
+        (d.ringkasan || []).forEach(function (r) {
+            h += '<li class="flex gap-2"><span class="text-amber-500">•</span><span><b>TA ' + parseInt(r.tahun, 10) + '</b>: ' + parseInt(r.jumlah, 10)
+               + ' laporan — alokasi ' + formatCurrency(r.alokasi) + ', realisasi ' + formatCurrency(r.realisasi) + '</span></li>';
+        });
+        h += '</ul>';
+        h += '<p class="text-sm text-amber-900">Penghapusan berlaku untuk <b>semua tahun</b>. Kalau ' + lbl + ' ini hanya <b>tidak ada di DPA tahun tertentu</b>, sebaiknya <b>jangan dihapus</b> — cukup biarkan kosong untuk tahun itu.</p>';
+        h += '<label class="flex items-start gap-3 cursor-pointer bg-white rounded-lg p-3 border border-amber-200">';
+        h += '<input type="checkbox" id="hp-paham" class="mt-1 w-5 h-5 accent-red-600 flex-shrink-0">';
+        h += '<span>Saya mengerti, data laporan di atas ikut dipindahkan ke <b>Data Terhapus</b>.</span></label>';
+        h += '</div>';
+    }
+
+    h += '<div class="rounded-xl bg-green-50 border border-green-200 p-3 text-sm text-green-800 flex gap-2">';
+    h += '<i class="fas fa-shield-heart mt-0.5"></i><span>Tenang, data <b>tidak hilang</b>. Anda bisa mengembalikannya kapan saja lewat tombol <b>Data Terhapus</b>.</span></div>';
+
+    $('#hp-body').html(h);
+    $('#hp-ok').prop('disabled', adaLaporan);
+    if (adaLaporan) {
+        $('#hp-paham').on('change', function () { $('#hp-ok').prop('disabled', !this.checked); });
+    }
+}
+
+function hpClose() {
+    if (_hp.busy) return;   // sedang menghapus — tunggu selesai
+    hpHideEl('hpModal');
+    _hp = { jenis: null, id: null, busy: false };
+}
+
+function hpSubmit() {
+    if (_hp.busy || !_hp.jenis) return;
+    if ($('#hp-paham').length && !$('#hp-paham').is(':checked')) return;
+    _hp.busy = true;
+    var btn = $('#hp-ok'), lama = btn.html();
+    btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin mr-1"></i> Menghapus...');
+    $.ajax({
+        url: HP_BASE + '/hierarki/' + HP_JENIS_URL[_hp.jenis] + '/' + _hp.id,
+        method: 'POST',
+        data: { _method: 'DELETE' }
+    })
+        .done(function (res) {
+            _hp.busy = false;
+            btn.html(lama);
+            hpClose();
+            hpUndoShow(res.message, res.batch_id);
+            loadData();
+            spRefreshBadge();
+        })
+        .fail(function (xhr) {
+            _hp.busy = false;
+            btn.html(lama).prop('disabled', false);
+            $('#hp-body').prepend(hpErrorHtml(hpXhrMsg(xhr, 'Gagal menghapus. Tidak ada data yang berubah. Silakan coba lagi.')));
+        });
+}
+
+/* ── Bar "Batalkan" (15 detik) ───────────────────────────────────── */
+function hpUndoShow(pesan, batchId) {
+    _hpUndoBatch = batchId || null;
+    document.getElementById('hp-undo-text').textContent = pesan || 'Data sudah dihapus.';
+    $('#hp-undo-btn').toggle(!!_hpUndoBatch).prop('disabled', false).html('<i class="fas fa-rotate-left mr-1"></i> Batalkan');
+    $('#hp-undo').removeClass('hidden');
+    clearTimeout(_hpUndoTimer);
+    _hpUndoTimer = setTimeout(hpUndoHide, 15000);
+}
+function hpUndoHide() {
+    clearTimeout(_hpUndoTimer);
+    $('#hp-undo').addClass('hidden');
+    _hpUndoBatch = null;
+}
+function hpUndo() {
+    if (!_hpUndoBatch) return;
+    var id = _hpUndoBatch;
+    clearTimeout(_hpUndoTimer);   // jangan hilang saat sedang diproses
+    $('#hp-undo-btn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin mr-1"></i> Mengembalikan...');
+    spKembalikanReq(id,
+        function (res) { hpUndoHide(); showToast(idxEsc(res.message || 'Data sudah dikembalikan.'), 'success'); },
+        function (pesan) {
+            hpUndoHide();
+            showToast(idxEsc(pesan), 'error');
+        });
+}
+
+/* ── Data Terhapus ────────────────────────────────────────────────── */
+var SP_ICON = { program: 'fa-folder text-yellow-500', kegiatan: 'fa-clipboard-list text-blue-500', sub_kegiatan: 'fa-file-lines text-gray-500' };
+
+function spParams() {
+    // Admin: ikuti filter Perangkat Daerah di halaman (kosong = semua). Operator: diabaikan server.
+    return { perangkat_daerah_id: $('#filter-perangkat').val() || '' };
+}
+function spOpen() {
+    spAlert('');
+    hpShowEl('spModal');
+    spLoad();
+}
+function spClose() { hpHideEl('spModal'); spAlert(''); }
+function spAlert(pesan) {
+    if (pesan) { document.getElementById('sp-alert-text').textContent = pesan; $('#sp-alert').removeClass('hidden').addClass('flex'); }
+    else { $('#sp-alert').addClass('hidden').removeClass('flex'); }
+}
+function spSetBadge(n) {
+    var b = $('#sp-badge');
+    if (n > 0) b.text(n > 99 ? '99+' : n).removeClass('hidden').addClass('inline-flex');
+    else b.addClass('hidden').removeClass('inline-flex');
+}
+function spRefreshBadge() {
+    if (hpIsOpen('spModal')) { spLoad(); return; }
+    $.get(HP_BASE + '/hierarki-terhapus', spParams()).done(function (res) { spSetBadge((res.data || []).length); });
+}
+function spLoad() {
+    $('#sp-body').html(hpLoadingHtml('Memuat data terhapus...'));
+    $.get(HP_BASE + '/hierarki-terhapus', spParams())
+        .done(function (res) { var list = res.data || []; spRender(list); spSetBadge(list.length); })
+        .fail(function (xhr) { $('#sp-body').html(hpErrorHtml(hpXhrMsg(xhr, 'Gagal memuat Data Terhapus. Silakan coba lagi.'))); });
+}
+
+function spRender(list) {
+    if (!list.length) {
+        $('#sp-body').html('<div class="text-center py-12 text-gray-500"><i class="fas fa-box-open text-5xl text-gray-300 mb-3"></i>'
+            + '<p class="text-lg font-semibold text-gray-600">Tidak ada data terhapus</p>'
+            + '<p class="text-sm mt-1">Data yang Anda hapus akan muncul di sini.</p></div>');
+        return;
+    }
+    var h = '';
+    list.forEach(function (d) {
+        h += '<div class="rounded-xl border-2 border-gray-200 p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:border-gray-300 transition">';
+        h += '<div class="flex-1 min-w-0">';
+        h += '<div class="flex flex-wrap items-center gap-2 mb-1">';
+        h += '<i class="fas ' + (SP_ICON[d.jenis] || 'fa-file') + ' text-lg"></i>';
+        h += '<span class="text-xs font-bold uppercase tracking-wide bg-gray-100 text-gray-600 px-2 py-0.5 rounded">' + idxEsc(d.label) + '</span>';
+        if (d.pd_nama && !{{ auth()->user()->isDaerah() ? 'true' : 'false' }}) {
+            h += '<span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded break-words">' + idxEsc(d.pd_nama) + '</span>';
+        }
+        h += '</div>';
+        h += '<div class="font-bold text-base text-gray-900 break-words">' + idxEsc(d.nama) + '</div>';
+        if (d.lokasi) h += '<div class="text-sm text-gray-500 break-words"><i class="fas fa-location-dot mr-1"></i>' + idxEsc(d.lokasi) + '</div>';
+
+        var isi = [];
+        if (d.jumlah_kegiatan > 0) isi.push(d.jumlah_kegiatan + ' kegiatan');
+        if (d.jumlah_sub > 0) isi.push(d.jumlah_sub + ' sub kegiatan');
+        if (isi.length) h += '<div class="text-sm text-gray-600 mt-1"><i class="fas fa-layer-group mr-1 text-gray-400"></i>Berisi ' + isi.join(', ') + '</div>';
+        if (d.ringkasan && d.ringkasan.length) {
+            h += '<div class="text-sm text-gray-600"><i class="fas fa-file-invoice-dollar mr-1 text-gray-400"></i>Data laporan: '
+               + d.ringkasan.map(function (r) { return 'TA ' + parseInt(r.tahun, 10) + ' (' + parseInt(r.jumlah, 10) + ' laporan, alokasi ' + formatCurrency(r.alokasi) + ')'; }).join('; ')
+               + '</div>';
+        }
+        if (d.sebagian_aktif) {
+            h += '<div class="text-sm text-amber-700 mt-1"><i class="fas fa-circle-info mr-1"></i>Sebagian isinya sudah aktif kembali karena ada data baru masuk.</div>';
+        }
+        h += '<div class="text-sm text-gray-500 mt-1"><i class="fas fa-user-clock mr-1 text-gray-400"></i>Dihapus oleh <b>' + idxEsc(d.dihapus_oleh || '-') + '</b>'
+           + (d.dihapus_pada ? ' · ' + idxEsc(d.dihapus_pada) : '') + '</div>';
+        h += '</div>';
+        h += '<button type="button" onclick="spKembalikan(' + parseInt(d.id, 10) + ', this)"'
+           + ' class="w-full sm:w-auto flex-shrink-0 px-5 py-3 rounded-xl bg-green-600 text-white font-bold text-base hover:bg-green-700 transition disabled:opacity-60">'
+           + '<i class="fas fa-rotate-left mr-1"></i> Kembalikan</button>';
+        h += '</div>';
+    });
+    $('#sp-body').html(h);
+}
+
+function spKembalikan(id, btn) {
+    var $b = $(btn), lama = $b.html();
+    $('#sp-body button').prop('disabled', true);   // satu per satu, cegah klik ganda
+    $b.html('<i class="fas fa-spinner fa-spin mr-1"></i> Mengembalikan...');
+    spAlert('');
+    spKembalikanReq(id,
+        function (res) { showToast(idxEsc(res.message || 'Data sudah dikembalikan.'), 'success'); },
+        function (pesan) {
+            $('#sp-body button').prop('disabled', false);
+            $b.html(lama);
+            spAlert(pesan);
+        });
+}
+
+/** ok(res) / gagal(pesan). Setelah berhasil: muat ulang pohon + Data Terhapus. */
+function spKembalikanReq(id, ok, gagal) {
+    $.post(HP_BASE + '/hierarki-terhapus/' + parseInt(id, 10) + '/kembalikan')
+        .done(function (res) {
+            if (ok) ok(res);
+            loadData();
+            spRefreshBadge();
+        })
+        .fail(function (xhr) {
+            if (gagal) gagal(hpXhrMsg(xhr, 'Gagal mengembalikan data. Silakan coba lagi.'));
+        });
+}
+
+document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (hpIsOpen('hpModal')) hpClose();
+    else if (hpIsOpen('spModal')) spClose();
+});
+
+$(function () { spRefreshBadge(); });
+</script>
+@endpush
+@endif

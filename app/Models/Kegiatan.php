@@ -6,11 +6,27 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use App\Services\HierarkiSampahService;
 
 class Kegiatan extends Model
 {
     protected $table = 'kegiatan';
-    
+
+    protected static function booted(): void
+    {
+        // Kegiatan aktif di bawah program yang ada di Data Terhapus → program aktif kembali.
+        static::saving(function (Kegiatan $kegiatan) {
+            if ($kegiatan->is_active && $kegiatan->getAttribute('hapus_batch_id')) {
+                $kegiatan->hapus_batch_id = null;
+            }
+        });
+        static::saved(function (Kegiatan $kegiatan) {
+            if ($kegiatan->is_active && $kegiatan->program_id) {
+                HierarkiSampahService::aktifkanProgramBilaTerhapus((int) $kegiatan->program_id);
+            }
+        });
+    }
+
     protected $fillable = [
         'program_id',
         'kode',

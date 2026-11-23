@@ -243,6 +243,8 @@ class HierarkiImportService
                 );
                 if ($sub) {
                     $c['sub_existing']++;
+                    // File import menyatakan item ini ada → bila sedang di Data Terhapus, aktifkan kembali.
+                    HierarkiSampahService::aktifkanBilaTerhapus((int) $sub->id);
                 } else {
                     SubKegiatan::create([
                         'kegiatan_id'       => $kegiatan->id,

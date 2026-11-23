@@ -32,6 +32,13 @@ class OppkpkeController extends Controller
     public const PROGRAM_PLACEHOLDER  = 'Program (belum diisi)';
     public const KEGIATAN_PLACEHOLDER = 'Kegiatan (belum diisi)';
 
+    /** Pesan bila yang hendak dibuat/diberi nama sama ternyata ada di Data Terhapus. */
+    private static function pesanDiDataTerhapus(string $label, string $nama): string
+    {
+        return $label . ' "' . $nama . '" sudah pernah ada dan sekarang ada di Data Terhapus. '
+            . 'Klik tombol "Data Terhapus" di halaman Input Data, lalu pilih "Kembalikan".';
+    }
+
     /**
      * Ubah nama (dan opsional kode) sebuah program. Untuk operator daerah:
      * terkunci ke program milik perangkat daerahnya. Admin boleh program mana pun.
@@ -66,7 +73,9 @@ class OppkpkeController extends Controller
         if ($dupe) {
             return response()->json([
                 'success' => false,
-                'message' => 'Sudah ada program lain dengan nama serupa: "' . $dupe->nama_program . '".',
+                'message' => $dupe->is_active
+                    ? 'Sudah ada program lain dengan nama serupa: "' . $dupe->nama_program . '".'
+                    : self::pesanDiDataTerhapus('Program', $dupe->nama_program),
             ], 422);
         }
 
@@ -119,7 +128,9 @@ class OppkpkeController extends Controller
         if ($dupe) {
             return response()->json([
                 'success' => false,
-                'message' => 'Sudah ada kegiatan lain dengan nama serupa: "' . $dupe->nama_kegiatan . '".',
+                'message' => $dupe->is_active
+                    ? 'Sudah ada kegiatan lain dengan nama serupa: "' . $dupe->nama_kegiatan . '".'
+                    : self::pesanDiDataTerhapus('Kegiatan', $dupe->nama_kegiatan),
             ], 422);
         }
 
@@ -701,6 +712,7 @@ class OppkpkeController extends Controller
                     if ($kegiatanMode === 'existing') {
                         $kegiatan = Kegiatan::where('id', $validated['kegiatan_id'])
                             ->where('program_id', $program->id)
+                            ->where('is_active', true)
                             ->first();
                         abort_unless($kegiatan, 422, 'Kegiatan yang dipilih tidak berada di bawah program tersebut.');
                         return $kegiatan;
@@ -715,7 +727,9 @@ class OppkpkeController extends Controller
                         $normalize($k->nama_kegiatan) === $normalize($namaKeg)
                     );
                     if ($dupeKeg) {
-                        abort(422, 'Kegiatan serupa sudah ada: "' . $dupeKeg->nama_kegiatan . '". Gunakan pilihan "kegiatan yang sudah ada".');
+                        abort(422, $dupeKeg->is_active
+                            ? 'Kegiatan serupa sudah ada: "' . $dupeKeg->nama_kegiatan . '". Gunakan pilihan "kegiatan yang sudah ada".'
+                            : self::pesanDiDataTerhapus('Kegiatan', $dupeKeg->nama_kegiatan));
                     }
                     $createdKegiatan = true;
                     return Kegiatan::create([
@@ -733,7 +747,9 @@ class OppkpkeController extends Controller
                         $normalize($s->nama_sub_kegiatan) === $normalize($namaSub)
                     );
                     if ($dupeSub) {
-                        abort(422, 'Sub kegiatan "' . $dupeSub->nama_sub_kegiatan . '" sudah ada di kegiatan ini.');
+                        abort(422, $dupeSub->is_active
+                            ? 'Sub kegiatan "' . $dupeSub->nama_sub_kegiatan . '" sudah ada di kegiatan ini.'
+                            : self::pesanDiDataTerhapus('Sub kegiatan', $dupeSub->nama_sub_kegiatan));
                     }
                     return SubKegiatan::create([
                         'kegiatan_id'       => $kegiatan->id,
@@ -749,6 +765,7 @@ class OppkpkeController extends Controller
                 if ($programMode === 'existing') {
                     $program = Program::where('id', $validated['program_id'])
                         ->where('perangkat_daerah_id', $pdId)
+                        ->where('is_active', true)
                         ->lockForUpdate()
                         ->first();
                     abort_unless($program, 422, 'Program yang dipilih tidak ditemukan pada perangkat daerah tujuan.');
@@ -769,7 +786,9 @@ class OppkpkeController extends Controller
                             (! $blankName && $normalize($p->nama_program) === $normalize($namaProg))
                         );
                         if ($dupe) {
-                            abort(422, 'Program serupa sudah ada pada salah satu strategi: "' . $dupe->nama_program . '".');
+                            abort(422, $dupe->is_active
+                                ? 'Program serupa sudah ada pada salah satu strategi: "' . $dupe->nama_program . '".'
+                                : self::pesanDiDataTerhapus('Program', $dupe->nama_program));
                         }
                         // Kode kosong bisa menabrak unique (strategi,pd,kode) bila sudah
                         // ada program berkode kosong di strategi+PD ini → buat kode unik.

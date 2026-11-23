@@ -24,16 +24,25 @@ FROM ${COMPOSER_IMAGE} AS composer
 # -----------------------------------------------------------------------------
 FROM ${PHP_IMAGE} AS base
 
+# SEGARKAN_OS diisi CI dengan nomor minggu (jadwal mingguan: unik per run); nilainya
+# tidak dipakai, tetapi pergantiannya menggugurkan cache lapisan apt di bawah sehingga
+# `apt-get upgrade` mengambil rilis keamanan Debian terbaru paling lambat seminggu sekali
+# (pola yang sama dengan repo PMB).
+ARG SEGARKAN_OS=lokal
+
 # Ekstensi di luar bawaan image resmi (dom, xml, mbstring, fileinfo, dll. sudah ada):
 #   pdo_mysql  MySQL                 gd     dompdf, phpspreadsheet (gambar)
 #   zip        phpspreadsheet        intl   format angka/tanggal
 #   bcmath     angka anggaran        pcntl  worker berhenti rapi saat deploy (SIGTERM)
 #   opcache    performa              exif   orientasi gambar
 # $savedAptMark sengaja tanpa kutip (daftar paket; pola resmi image PHP).
-# hadolint ignore=SC2086
+# DL3005: apt-get upgrade disengaja (lihat SEGARKAN_OS); tag image dasar tetap dipin.
+# hadolint ignore=SC2086,DL3005
 RUN set -eux; \
     savedAptMark="$(apt-mark showmanual)"; \
     apt-get update; \
+    # Tambalan keamanan Debian yang terbit SETELAH image php resmi dibangun.
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=--force-confold; \
     apt-get install -y --no-install-recommends \
         libfreetype-dev libjpeg62-turbo-dev libpng-dev libwebp-dev \
         libzip-dev libicu-dev; \
@@ -49,12 +58,18 @@ RUN set -eux; \
         | sort -u \
         | xargs -r apt-mark manual > /dev/null; \
     apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+    # Toolchain build ($PHPIZE_DEPS) dibiarkan terpasang oleh image php resmi Debian.
+    # Ekstensi sudah dikompilasi di atas, jadi di production tidak dibutuhkan: compiler
+    # di container = alat bagi penyerang, dan linux-libc-dev sendiri membawa ratusan CVE.
+    apt-get purge -y --auto-remove autoconf dpkg-dev file g++ gcc libc6-dev make pkg-config re2c; \
     # Runtime: cgi-fcgi (health check php-fpm), sertifikat CA (SMTP/HTTPS keluar).
     apt-get install -y --no-install-recommends libfcgi-bin ca-certificates; \
     rm -rf /var/lib/apt/lists/*; \
     for e in pdo_mysql pcntl gd intl zip bcmath exif dom xml mbstring fileinfo; do php -m | grep -qix "$e"; done; \
     php -m | grep -qi 'zend opcache'; \
-    command -v cgi-fcgi
+    command -v cgi-fcgi; \
+    for t in gcc cc g++ make; do if command -v "$t"; then echo "toolchain $t masih ada di image" >&2; exit 1; fi; done; \
+    if dpkg -s linux-libc-dev >/dev/null 2>&1; then echo "linux-libc-dev masih ada di image" >&2; exit 1; fi
 
 RUN cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 COPY docker/php/php.ini        /usr/local/etc/php/conf.d/zz-rpkd.ini
